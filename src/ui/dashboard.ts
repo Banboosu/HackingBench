@@ -123,6 +123,8 @@ const plain: DashboardPaint = {
   bold: (text) => text,
 };
 export interface DashboardOptions {
+  /** Exact area allocated by the workbench layout; no terminal-height cap. */
+  height?: number;
   rows?: number;
   theme?: DashboardPaint;
   frame?: number;
@@ -245,7 +247,6 @@ function phaseRole(
 }
 function header(
   state: DashboardState,
-  config: BenchConfig,
   demo: boolean,
   width: number,
   p: DashboardPaint,
@@ -260,9 +261,7 @@ function header(
       p.fg("muted", "AUTONOMOUS HACKNET SPEEDRUN LAB"),
       p.fg(
         demo ? "warning" : "dim",
-        demo
-          ? "SIMULATION / NO API OR GAME"
-          : `LOCAL / ${config.knowledge} / EXPERIMENTAL`,
+        demo ? "SIMULATION / NO API OR GAME" : "LOCAL / EXPERIMENTAL",
       ),
       width,
     ),
@@ -303,7 +302,7 @@ function activity(
         `${spinner} LLM ${oneLine(state.activity)}`,
       ),
       p.fg("accent", tpsLabel(state)) +
-        (width >= 62
+        (width >= 62 && (state.llmMs > 0 || state.toolMs > 0 || !!state.action)
           ? p.fg(
               "dim",
               ` · LLM ${(number(state.llmMs) / 1000).toFixed(1)}s · TOOL ${(number(state.toolMs) / 1000).toFixed(1)}s`,
@@ -312,10 +311,12 @@ function activity(
       width,
       0.69,
     ),
-    p.fg("accent", clip(`› ${state.action || "No tool call yet"}`, width)),
-    ...voice.map((line, i) =>
-      p.fg("muted", `${i ? "        " : "AGENT   "}${line}`),
-    ),
+    ...(state.action ? [p.fg("accent", clip(`› ${state.action}`, width))] : []),
+    ...(state.assistant || busy
+      ? voice.map((line, i) =>
+          p.fg("muted", `${i ? "        " : "AGENT   "}${line}`),
+        )
+      : []),
   ];
 }
 function terminalLines(
@@ -331,12 +332,7 @@ function terminalLines(
     : state.observation
       ? [{ kind: "game" as const, text: state.observation }]
       : [];
-  if (
-    !history.length ||
-    (!state.action &&
-      !state.observation &&
-      history.every((entry) => entry.kind === "system"))
-  )
+  if (!history.length)
     return [
       p.fg(
         "dim",
@@ -433,10 +429,10 @@ function operator(
   if (height >= 17)
     lines.push(
       "",
-      label("OBSERVATION"),
+      label("EXPERIMENT /config"),
       value(`${config.knowledge} · ${config.observation}`),
     );
-  if (height >= 22 && state.environment)
+  if (height >= 21 && state.environment)
     lines.push(
       "",
       label("ENVIRONMENT"),
@@ -496,6 +492,20 @@ function telemetry(
     p,
   );
 }
+function statusLines(
+  state: DashboardState,
+  width: number,
+  p: DashboardPaint,
+): string[] {
+  return state.log
+    ? [
+        p.fg(
+          state.phase === "ERROR" ? "error" : "muted",
+          clip(state.log, width),
+        ),
+      ]
+    : [];
+}
 function compact(
   state: DashboardState,
   config: BenchConfig,
@@ -506,6 +516,7 @@ function compact(
   frame: number,
 ): string[] {
   const budget = `TIME ${clock(state.wallMs)}  TOOLS ${count(state.steps)}/${count(config.maxSteps)}  TOKENS ${shortCount(state.tokens)}/${shortCount(config.maxTokens)}`;
+  const notice = statusLines(state, width, p);
   if (height < 11 || width < 44) {
     return [
       p.fg(
@@ -522,22 +533,19 @@ function compact(
       ...terminalLines(
         state,
         Math.max(1, width),
-        Math.max(1, height - 5),
+        Math.max(0, height - 4 - notice.length),
         p,
         demo,
       ),
-      p.fg(
-        "muted",
-        `STATUS ${state.log || "/provider → /login → /model → /start"}`,
-      ),
+      ...notice,
       p.fg("warning", "Not an OS sandbox · DLC not scored"),
     ]
       .slice(0, height)
       .map((line) => fit(line, width));
   }
-  const gameHeight = height - 7;
+  const gameHeight = height - 4 - notice.length;
   return [
-    ...header(state, config, demo, width, p),
+    ...header(state, demo, width, p),
     ...panel(
       "LIVE TERMINAL",
       [
@@ -549,13 +557,7 @@ function compact(
       p,
     ),
     p.fg("text", clip(budget, width)),
-    p.fg(
-      "muted",
-      clip(
-        `STATUS ${state.log || "Original campaign · independent completion judge"}`,
-        width,
-      ),
-    ),
+    ...notice,
     p.fg(
       "warning",
       clip("Not an OS sandbox · DLC not scored · /stop cancels run", width),
@@ -572,7 +574,11 @@ export function dashboardLines(
 ): string[] {
   const width = Math.max(1, Math.floor(columns));
   const rows = Math.max(1, Math.floor(options.rows ?? 36));
-  const height = Math.min(36, Math.max(6, rows - 8), options.compact ? 9 : 36);
+  const allocated = Math.max(
+    1,
+    Math.floor(options.height ?? Math.max(6, rows - 6)),
+  );
+  const height = options.compact ? Math.min(9, allocated) : allocated;
   const p = options.theme ?? plain;
   const frame = options.frame ?? 0;
   const margin = width >= 48 ? 1 : 0;
@@ -581,10 +587,16 @@ export function dashboardLines(
   if (inner < 88 || height < 21)
     lines = compact(state, config, demo, inner, height, p, frame);
   else {
-    const bodyHeight = height - 9;
+    const notice = statusLines(state, inner, p);
+    const bodyHeight = height - 7 - notice.length;
     const leftWidth = Math.max(26, Math.min(32, Math.floor(inner * 0.26)));
     const rightWidth = inner - leftWidth - 1;
-    const activityHeight = 6;
+    const activityHeight =
+      !state.action &&
+      !state.assistant &&
+      ["idle", "settled"].includes(state.activity)
+        ? 3
+        : 6;
     const left = panel(
       "OPERATOR",
       operator(state, config, demo, leftWidth - 4, bodyHeight - 2, p),
@@ -617,24 +629,11 @@ export function dashboardLines(
       ),
     ];
     lines = [
-      ...header(state, config, demo, inner, p),
+      ...header(state, demo, inner, p),
       "",
       ...left.map((line, i) => line + " " + right[i]),
       ...telemetry(state, config, inner, p),
-      pair(
-        p.fg("accent", "MISSION // ORIGINAL CAMPAIGN"),
-        p.fg("dim", ""),
-        inner,
-      ),
-      p.fg(
-        state.result && !["success", "cancelled"].includes(state.result)
-          ? "error"
-          : "muted",
-        clip(
-          `STATUS ${state.log || "/provider → /login → /model → /test → /start"}`,
-          inner,
-        ),
-      ),
+      ...notice,
     ];
   }
   return lines.map(
@@ -645,9 +644,9 @@ export function dashboardLines(
 export function deckFooter(width: number, p: DashboardPaint = plain): string[] {
   const commands =
     width >= 92
-      ? "/start  /stop   /provider  /login  /model  /thinking   /bench  /test   /quit"
+      ? "/start  /stop   /config  /provider  /login  /model  /thinking   /bench  /test   /quit"
       : width >= 55
-        ? "/start  /stop  /provider  /login  /model  /quit"
-        : "/start  /stop  /login  /quit";
+        ? "/start  /stop  /config  /login  /model  /quit"
+        : "/start  /stop  /config  /quit";
   return [p.fg("accent", clip(` ${commands}`, width))];
 }

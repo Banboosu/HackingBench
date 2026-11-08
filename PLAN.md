@@ -273,3 +273,20 @@ ok
 - 新增开发依赖 `@xterm/headless` 5.5.0，在真实 InteractiveMode 的 ANSI viewport 检查分区、TPS、登录遮罩、原生模型弹窗、后台启动/停止及 55–140 列 resize；预览仅存 `runtime/ui-preview/` 的 HTML/text，全部为本机假服务/假 runner。
 - 验证：`bun run check` 的 TypeScript + **85 个测试**，`smoke:tui` 与 `smoke:pi`。RPC smoke 从两次真实 pi 回复事件读到 10 个输出 token，验证使用 output usage 而不是 input+output 的总 token。
 - 本次没有使用真实 CommandCode key，没有真实 API 推理、游戏启动或 LLM 战役尝试；完整战役和 DLC 限制不变。
+
+## 13. 后续截图反馈：大窗口顶部空白与重复信息
+
+- 根因：原先将 dashboard 放在原生编辑器上方的 widget 中，且限制 36 行；pi 的 transcript 会增长占据剩余空间。启动环境摘要又同时写入原生通知、Operator 和 STATUS，造成重复。
+- 新增项目内 `src/ui/layout.ts`，通过同一个 pi TUI 的 `VStack` / `ScrollView` 和已挂载组件重排为 **主面板 → 有界原生反馈 → 原生输入/弹窗 → footer**。不创建第二个 renderer，不修改 node_modules、全局配置或 InteractiveMode 私有字段；对固定 pi 1.5.0 的七组件树作明确契约检查。
+- 面板使用扣除原生输入、补全、弹窗和反馈后实际可用的高度，取消 36 行限高。常规界面标题从第 1 行开始，大屏不再出现独立的顶部空白聊天区。
+- 成功的自动环境检查只显示在 Operator；常规命令反馈、run 结果各保留一个显示位置。删除重复 MISSION / 默认 STATUS、空闲 agent 说明和无动作占位；保留用户已删去重复安全 footer 的改动。异常仍通过原生反馈显示，不因去重而隐藏。
+- 原生登录/模型/编辑器与 TPS、玩家工具权限不变。启动检测支持测试注入，smoke 不调用真实 API 或游戏，不改现有 bench 配置。
+- 验证新增大窗口首行定位和环境去重回归；TypeScript + **87 个测试**，真实原生 TUI smoke 覆盖 55–200 列 / 最高 70 行，含 168×54、200×70、遮罩登录、模型选择、多行输入/补全和后台停止。
+
+## 14. 恢复迁移时遗漏的工作台设置入口
+
+- 用户反馈 L0/L1、text/image 等选项不见了。确认配置 schema、prompt 与截图工具开关仍存在，但迁移原生 pi 时只保留 `/bench` 预算入口，其他工作台选项被留在 JSON 中，属于交互功能回退。
+- 新增 `/config`，通过 pi 原生 select/input 菜单恢复知识、文字/文字+图像观测、三项预算、上下文/输出限制、游戏来源和 pi.exe 路径；支持 `/config knowledge L0`、`/config observation text+image` 等直接修改与参数补全。接受后立即保存非敏感配置，Esc 取消当前项/退出菜单。
+- 菜单、反馈明确 next run；任务活跃时拒绝修改，弹窗返回后再次检查。已完成面板保留旧配置快照，下一 run 使用新配置。不覆盖原生 `/settings`、`/login`、`/model`、`/thinking`，不恢复旧 keyEnv/会话密钥 UI 或第二套 renderer。
+- text+image 明示需要视觉模型，只增加既有游戏 framebuffer 工具；L0/L1 只控制额外命令速查。新增测试验证四种组合的实际 jail prompt、图像输入声明、环境开关与准确工具名单，而非只检查界面文字。
+- TypeScript + **93 个测试**、原生 TUI smoke 与 Pi RPC smoke 通过；TUI 验证设置菜单、原生枚举选择、原生参数补全及 55×20 设置菜单。没有真实 API/key、游戏启动或真实战役，smoke 不改用户 bench 配置。

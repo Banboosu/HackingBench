@@ -3,7 +3,7 @@ import type {
   ExtensionContext,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { Text, type AutocompleteItem } from "@earendil-works/pi-tui";
 import { configSchema, saveConfig, type BenchConfig } from "../config.js";
 import { RunController } from "../runner.js";
 import { endpointIdentity, projectKey, literalApiKey } from "../pi/project.js";
@@ -28,6 +28,15 @@ import {
   observeDashboard,
 } from "./dashboard.js";
 import { BenchEditor } from "./editor.js";
+import { mountDeckLayout } from "./layout.js";
+import {
+  BENCH_SETTINGS,
+  benchSetting,
+  changeSetting,
+  configCompletions,
+  settingValue,
+  type BenchSetting,
+} from "./settings.js";
 import type { NativeSecretPrompts } from "./secret.js";
 
 export interface ControllerOptions {
@@ -37,6 +46,7 @@ export interface ControllerOptions {
   makeRunner?: () => RunController;
   secretPrompts?: NativeSecretPrompts;
   autoInspect?: boolean;
+  inspectEnvironment?: typeof inspect;
 }
 /** Native pi control plane. No login command, no player tools, no control-plane LLM calls. */
 export function controllerExtension(options: ControllerOptions) {
@@ -54,8 +64,6 @@ export function controllerExtension(options: ControllerOptions) {
     let state = emptyDashboard();
     let activeConfig: BenchConfig | undefined;
     let lastRunConfig: BenchConfig | undefined;
-    let dialogOpen = false;
-    let nativeEditor: BenchEditor | undefined;
     const secrets = new Set<string>();
     const safe = (text: string) => terminalText(redact(text, [...secrets]));
     const update = () => {
@@ -65,7 +73,13 @@ export function controllerExtension(options: ControllerOptions) {
       text: string,
       type: "info" | "warning" | "error" = "info",
     ) => {
-      if (!closed) ctx?.ui.notify(safe(text), type);
+      if (closed) return;
+      const message = safe(text);
+      // Routine feedback has one home in the deck. Only actionable warnings /
+      // errors use pi's native feedback area (below the deck, never above it).
+      state.log = type === "info" ? message.slice(-1000) : "";
+      if (type !== "info") ctx?.ui.notify(message, type);
+      update();
     };
     let saving = Promise.resolve();
     const commit = async (next: BenchConfig) => {
@@ -91,14 +105,13 @@ export function controllerExtension(options: ControllerOptions) {
       operation = new AbortController();
       state.phase = label;
       state.activity = label.toLowerCase();
+      state.log = "";
       update();
       task = Promise.resolve()
         .then(() => action(operation!.signal))
         .catch((error) => {
-          state.log = safe((error as Error).message);
           state.phase = "ERROR";
-          appendDashboard(state, "error", state.log);
-          notify(state.log, "error");
+          notify((error as Error).message, "error");
         })
         .finally(() => {
           task = undefined;
@@ -183,37 +196,31 @@ export function controllerExtension(options: ControllerOptions) {
       context.ui.setHeader(() => ({ render: () => [], invalidate() {} }));
       context.ui.setEditorComponent(
         (tui, editorTheme, keys) =>
-          (nativeEditor = new BenchEditor(
-            tui,
-            editorTheme,
-            keys,
-            () => context.ui.theme,
-          )),
+          new BenchEditor(tui, editorTheme, keys, () => context.ui.theme),
       );
       context.ui.setWidget("bench.dashboard", (tui, theme) => {
         repaint = () => tui.requestRender();
+        const deck = mountDeckLayout(tui, (width, height) => {
+          const displayedConfig =
+            activeConfig ??
+            (state.result ? lastRunConfig : undefined) ??
+            config;
+          const auth = context.modelRegistry?.getProviderAuthStatus(
+            endpointIdentity(displayedConfig),
+          );
+          if (auth)
+            state.credential =
+              auth.configured && auth.source === "stored"
+                ? "stored"
+                : "unknown";
+          return dashboardLines(state, displayedConfig, demo, width, {
+            height,
+            theme,
+            frame: Math.floor(performance.now() / 240),
+          });
+        });
         return {
-          render: (width: number) => {
-            const displayedConfig =
-              activeConfig ??
-              (state.result ? lastRunConfig : undefined) ??
-              config;
-            const auth = context.modelRegistry?.getProviderAuthStatus(
-              endpointIdentity(displayedConfig),
-            );
-            if (auth)
-              state.credential =
-                auth.configured && auth.source === "stored"
-                  ? "stored"
-                  : "unknown";
-            return dashboardLines(state, displayedConfig, demo, width, {
-              rows: tui.terminal?.rows ?? 36,
-              theme,
-              frame: Math.floor(performance.now() / 240),
-              compact: dialogOpen || (!!nativeEditor && !nativeEditor.focused),
-            });
-          },
-          invalidate() {},
+          ...deck,
           dispose() {
             repaint = undefined;
           },
@@ -225,19 +232,10 @@ export function controllerExtension(options: ControllerOptions) {
       }));
       timer = setInterval(update, 250);
       timer.unref();
-      state.log = demo
-        ? "SIMULATION · /start previews the deck; no API, game or official score."
-        : "/provider → /login → /model → /test → /start";
-      appendDashboard(
-        state,
-        "system",
-        demo
-          ? "SIMULATION · no real game or API calls"
-          : "Control deck online. Native /login stores credentials only in this project.",
-      );
+      state.log = "";
       if (options.autoInspect)
         launch("DETECTING", async () => {
-          const env = await inspect(config);
+          const env = await (options.inspectEnvironment ?? inspect)(config);
           state.environment = {
             runtime: env.runtime,
             pi: env.piVersion ?? "not found",
@@ -245,13 +243,8 @@ export function controllerExtension(options: ControllerOptions) {
             dlc: env.dlc,
             problems: env.problems.length,
           };
-          state.log = `${env.runtime} | pi ${env.piVersion ?? "not found"} | game ${env.gameSource ? "found" : "not found"} | DLC ${env.dlc ? "found" : "not found"} | ${env.problems.length ? env.problems.join("; ") : "prerequisites OK"}`;
-          appendDashboard(
-            state,
-            env.problems.length ? "error" : "system",
-            state.log,
-          );
-          notify(state.log, env.problems.length ? "warning" : "info");
+          if (env.problems.length) notify(env.problems.join("\n"), "warning");
+          update();
         });
     });
     pi.on("session_shutdown", async () => {
@@ -262,21 +255,13 @@ export function controllerExtension(options: ControllerOptions) {
       secrets.clear();
       if (options.secretPrompts) options.secretPrompts.context = undefined;
     });
-    pi.on("ui_prompt_start", () => {
-      dialogOpen = true;
-      update();
-    });
-    pi.on("ui_prompt_end", () => {
-      dialogOpen = false;
-      update();
-    });
     // Session replacements could bypass the in-memory manager or abandon a live game.
     pi.on("session_before_switch", () => ({ cancel: true }));
     pi.on("session_before_fork", () => ({ cancel: true }));
     pi.on("session_before_compact", () => ({ cancel: true }));
     pi.on("input", () => {
       notify(
-        "Control deck only: use /provider, /login, /model, /test, /start or /stop. No prompt was sent.",
+        "Control deck only: use /config, /provider, /login, /model, /test, /start or /stop. No prompt was sent.",
       );
       return { action: "handled" };
     });
@@ -329,9 +314,11 @@ export function controllerExtension(options: ControllerOptions) {
       name: string,
       description: string,
       handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>,
+      getArgumentCompletions?: (prefix: string) => AutocompleteItem[] | null,
     ) => {
       pi.registerCommand(name, {
         description,
+        getArgumentCompletions,
         handler: async (args, context) => {
           ctx = context;
           try {
@@ -342,6 +329,71 @@ export function controllerExtension(options: ControllerOptions) {
         },
       });
     };
+    command(
+      "config",
+      "Benchmark settings: L0/L1, text/text+image, budgets and paths; /config [field [value]]",
+      async (args, context) => {
+        const ensureEditable = () => {
+          if (closed) throw new Error("Workbench is closing.");
+          if (task)
+            throw new Error("Use /stop before changing benchmark settings.");
+        };
+        const edit = async (field: BenchSetting, raw?: string) => {
+          if (raw === undefined) {
+            if (field.choices) {
+              const selected = await context.ui.select(
+                `${field.label} · current: ${settingValue(config, field)}`,
+                field.choices.map((choice) => choice.label),
+              );
+              raw = field.choices.find(
+                (choice) => choice.label === selected,
+              )?.value;
+            } else {
+              raw = await context.ui.input(
+                `${field.label} · ${field.help}`,
+                safe(String(config[field.key])),
+              );
+            }
+          }
+          if (raw === undefined) return;
+          // Recheck after a dialog: a concurrent programmatic /start must not
+          // mutate the active attempt or change its tool loadout.
+          ensureEditable();
+          await commit(changeSetting(config, field, raw));
+          if (field.key === "gameSource" || field.key === "piExecutable")
+            state.environment = undefined;
+          notify(
+            `Saved for next run: ${field.label} = ${settingValue(config, field)}.${
+              field.key === "observation" && config.observation === "text+image"
+                ? " Vision model required; images are game-only, not desktop captures."
+                : ""
+            }`,
+          );
+        };
+        ensureEditable();
+        if (args) {
+          const [, key, value] = args.match(/^(\S+)(?:\s+([\s\S]+))?$/)!;
+          await edit(benchSetting(key!), value);
+          return;
+        }
+        // Reuse native pi dialogs; each accepted edit saves immediately. Esc
+        // cancels the current prompt, and Esc on this menu returns to the deck.
+        while (!closed) {
+          ensureEditable();
+          const labels = BENCH_SETTINGS.map((field) =>
+            safe(`${field.label} · ${settingValue(config, field)}`),
+          );
+          const choice = await context.ui.select(
+            "Benchmark settings / next run · auto-saved · Esc to close",
+            labels,
+          );
+          if (choice === undefined || closed) return;
+          const field = BENCH_SETTINGS[labels.indexOf(choice)];
+          if (field) await edit(field);
+        }
+      },
+      configCompletions,
+    );
     command(
       "provider",
       "Configure endpoint (no key here), refresh catalog or enter a manual model",
@@ -476,8 +528,7 @@ export function controllerExtension(options: ControllerOptions) {
             update();
           });
           runner.on("log", (text) => {
-            state.log = safe(text).slice(-1000);
-            appendDashboard(state, "system", state.log);
+            appendDashboard(state, "system", safe(text));
             update();
           });
           const result = await runner.run(snapshot, key, demo);
@@ -489,14 +540,7 @@ export function controllerExtension(options: ControllerOptions) {
           if (result.toolMs !== undefined) state.toolMs = result.toolMs;
           state.outputTps = result.outputTps ?? state.outputTps;
           state.log = `${demo ? "SIMULATED / NOT SCORED" : result.status.toUpperCase()} · ${result.runId} · ${result.steps} tools · ${Math.round(result.wallMs / 1000)}s`;
-          appendDashboard(
-            state,
-            ["success", "cancelled"].includes(result.status)
-              ? "system"
-              : "error",
-            state.log,
-          );
-          if (!closed) pi.appendEntry("bench.notice", { text: state.log });
+          update();
         });
       },
     );

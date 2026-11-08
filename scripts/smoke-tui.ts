@@ -5,7 +5,12 @@ import type { RunController } from "../src/runner.js";
 import { mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { defaults, CONFIG_FILE, RUNTIME } from "../src/config.js";
+import {
+  defaults,
+  CONFIG_FILE,
+  RUNTIME,
+  type BenchConfig,
+} from "../src/config.js";
 import {
   controllerEnvironment,
   CONTROLLER_DIR,
@@ -55,9 +60,11 @@ const id = endpointIdentity(config);
 const terminal = new TestTerminal();
 const previousConfig = await readFile(CONFIG_FILE).catch(() => undefined);
 let starts = 0;
+const runConfigs: BenchConfig[] = [];
 let finishRun: (() => void) | undefined;
 class FakeRunner extends EventEmitter {
-  async run() {
+  async run(snapshot: BenchConfig) {
+    runConfigs.push(snapshot);
     starts++;
     this.emit("phase", "RUNNING");
     this.emit("activity", "thinking");
@@ -109,7 +116,16 @@ class FakeRunner extends EventEmitter {
 }
 const saved: any[] = [];
 const runtime = await createWorkbench(config, false, {
-  autoInspect: false,
+  autoInspect: true,
+  inspectEnvironment: async () => ({
+    platform: "win32",
+    runtime: "Bun fixture",
+    piVersion: "1.5.0",
+    gameSource: "fixture-game",
+    dlc: true,
+    prepared: true,
+    problems: [],
+  }),
   persist: async (value) => {
     saved.push(value);
   },
@@ -119,7 +135,13 @@ const mode = new InteractiveMode(runtime, { terminal, tuiMode: "fullscreen" });
 async function capture(name: string): Promise<string> {
   const dir = path.join(RUNTIME, "ui-preview");
   await mkdir(dir, { recursive: true });
-  const frame = (await terminal.frame()).join("\n");
+  const lines = await terminal.frame();
+  assert.match(
+    lines[0]!,
+    /HACKINGBENCH/,
+    "Deck must start at the top, not below empty transcript space.",
+  );
+  const frame = lines.join("\n");
   assert.ok(
     !frame.includes(key),
     "Native viewport exposed fixture credential.",
@@ -145,20 +167,132 @@ async function until(
 try {
   await mode.init();
   await until(() => frameIncludes("HACKINGBENCH"), "Dashboard did not render.");
+  await until(
+    () => frameIncludes("Local prerequisites OK"),
+    "Startup environment did not render.",
+  );
   const idle = await capture("native-idle-100x36");
+  for (const [columns, rows] of [
+    [168, 54],
+    [200, 70],
+    [100, 36],
+  ]) {
+    terminal.resize(columns!, rows!);
+    await delay(120);
+    const frame = await capture(`native-idle-${columns}x${rows}`);
+    assert.equal(
+      frame.split("Bun fixture").length - 1,
+      1,
+      "Environment summary must appear only once.",
+    );
+    assert.doesNotMatch(frame, /MISSION \/\/|STATUS|game found|DLC found/);
+    assert.match(frame, /RUN TELEMETRY/);
+    assert.match(frame, /COMMAND/);
+  }
   for (const title of [
     "OPERATOR",
     "AGENT ACTIVITY",
     "LIVE TERMINAL",
     "RUN TELEMETRY",
     "COMMAND // native pi",
-    "Not an OS sandbox",
   ])
     assert.ok(
       idle.includes(title),
       `Missing ${title} in actual native viewport.`,
     );
   assert.deepEqual(runtime.session.getActiveToolNames(), []);
+  terminal.type("/pro");
+  await until(
+    () => frameIncludes("Configure endpoint"),
+    "Native command completion did not render.",
+  );
+  await capture("native-command-completion");
+  mode.clearEditor();
+  terminal.input?.("\x1b[200~draft one\ndraft two\x1b[201~");
+  await until(
+    () => frameIncludes("draft two"),
+    "Native multiline editing did not render.",
+  );
+  const multiline = await capture("native-multiline-editor");
+  assert.match(multiline, /draft one/);
+  assert.match(multiline, /COMMAND/);
+  assert.equal(
+    catalogCalls,
+    0,
+    "Layout and editing must not request a model catalog.",
+  );
+  mode.clearEditor();
+  terminal.type("/config knowledge l");
+  await until(
+    () => frameIncludes("L0 — Game help"),
+    "Knowledge argument completion did not render.",
+  );
+  terminal.input?.("\t");
+  await until(
+    () => frameIncludes("/config knowledge L0"),
+    "Native completion did not preserve the /config field prefix.",
+  );
+  mode.clearEditor();
+  // init() binds native UI but doesn't run InteractiveMode's input loop.
+  // Dispatch extension commands through the SDK; dialogs still use native input.
+  const settingsTask = runtime.session.prompt("/config");
+  await until(
+    () => frameIncludes("Benchmark settings / next run"),
+    "Benchmark settings menu did not open.",
+  );
+  const settings = await capture("native-bench-settings");
+  assert.match(settings, /Knowledge · L1/);
+  assert.match(settings, /Observation · text/);
+  assert.match(settings, /Wall budget/);
+  assert.match(settings, /pi.exe path/);
+  terminal.resize(55, 20);
+  await delay(120);
+  const smallSettings = await capture("native-bench-settings-55x20");
+  assert.match(smallSettings, /pi.exe path/);
+  assert.match(smallSettings, /cancel/);
+  terminal.resize(100, 36);
+  await delay(120);
+  terminal.input?.("\r");
+  await until(
+    () => frameIncludes("Knowledge · current: L1"),
+    "Knowledge selector did not open.",
+  );
+  assert.match(
+    await capture("native-knowledge-selector"),
+    /L1 — Include a short command guide/,
+  );
+  terminal.input?.("\r"); // First choice: L0, game help only.
+  await until(
+    () => saved.at(-1)?.knowledge === "L0" && frameIncludes("Knowledge · L0"),
+    "L0 was not saved and reflected in the menu.",
+  );
+  terminal.input?.("\x1b[B");
+  terminal.input?.("\r"); // Observation.
+  await until(
+    () => frameIncludes("Observation · current: text"),
+    "Observation selector did not open.",
+  );
+  assert.match(
+    await capture("native-observation-selector"),
+    /vision model required/,
+  );
+  terminal.input?.("\x1b[B");
+  terminal.input?.("\r");
+  await until(
+    () => saved.at(-1)?.observation === "text+image",
+    "Image observation was not persisted.",
+  );
+  await until(
+    () => frameIncludes("Benchmark settings / next run"),
+    "Settings menu did not reopen after saving.",
+  );
+  terminal.input?.("\x1b");
+  await until(
+    () => frameIncludes("COMMAND // native pi"),
+    "Esc did not return from settings to the native editor.",
+  );
+  await settingsTask;
+  assert.equal(catalogCalls, 0, "Benchmark settings must not call a provider.");
   // Built-in command handling is in the native editor submit path, not session.prompt().
   terminal.type(`/login ${id}`);
   terminal.input?.("\r");
@@ -229,6 +363,8 @@ try {
   );
   await runtime.session.prompt("/start");
   await until(() => starts === 1, "Background fake run was not started.");
+  assert.equal(runConfigs[0]!.knowledge, "L0");
+  assert.equal(runConfigs[0]!.observation, "text+image");
   await until(
     () => frameIncludes("Connection established."),
     "Structured game terminal was not rendered.",
@@ -242,6 +378,8 @@ try {
     [80, 24],
     [55, 20],
     [140, 42],
+    [168, 54],
+    [200, 70],
     [100, 36],
   ]) {
     terminal.resize(columns!, rows!);
@@ -269,8 +407,11 @@ try {
   // /start is backed exclusively by FakeRunner here. Never invoke real runner or /test.
   assert.equal(runtime.session.sessionFile, undefined);
   console.log(
-    "PASS: real native pi viewport + panels + masked /login + native model picker/high thinking + background fake /start/stop + resize 55–140 columns. HTML/text previews: runtime/ui-preview/. No real API/game.",
+    "PASS: real native pi viewport + top-anchored deck + one environment summary + native /config L0/L1/text/image + masked /login + native model picker/high thinking + background fake /start/stop + resize 55–200 columns / up to 70 rows. HTML/text previews: runtime/ui-preview/. No real API/game.",
   );
+} catch (error) {
+  await capture("native-smoke-failed").catch(() => undefined);
+  throw error;
 } finally {
   mode.stop();
   await runtime.session.modelRuntime.logout(id).catch(() => undefined);

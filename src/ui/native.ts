@@ -27,7 +27,7 @@ export async function createWorkbench(
   demo = false,
   overrides: Pick<
     ControllerOptions,
-    "persist" | "makeRunner" | "autoInspect"
+    "persist" | "makeRunner" | "autoInspect" | "inspectEnvironment"
   > = {},
 ) {
   if (process.env.PI_CODING_AGENT_DIR !== CONTROLLER_DIR)

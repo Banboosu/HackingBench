@@ -15,6 +15,7 @@ import {
 import { createBenchTheme } from "../src/ui/theme.js";
 import { controllerExtension } from "../src/ui/controller.js";
 import { NativeSecretPrompts } from "../src/ui/secret.js";
+import { benchSetting } from "../src/ui/settings.js";
 import type { RunController } from "../src/runner.js";
 
 test("Hacknet panels preserve native input space and TPS across terminal sizes and color themes", () => {
@@ -71,6 +72,67 @@ test("Hacknet panels preserve native input space and TPS across terminal sizes a
   assert.ok(modal.length <= 9, "Native dialogs must have room to breathe.");
   assert.match(modal.join("\n"), /TPS 13\.8/);
   assert.doesNotMatch(full, /mission.*\d+%/i);
+});
+
+test("large viewports use their allocated height without duplicate idle status or mission banners", () => {
+  const state = {
+    ...emptyDashboard(),
+    environment: {
+      runtime: "Bun fixture",
+      pi: "1.5.0",
+      game: true,
+      dlc: true,
+      problems: 0,
+    },
+  };
+  for (const [width, height] of [
+    [168, 50],
+    [200, 66],
+    [100, 32],
+  ]) {
+    const lines = dashboardLines(state, defaults(), false, width!, {
+      height: height!,
+    });
+    assert.equal(lines.length, height);
+    assert.match(lines[0]!, /HACKINGBENCH/);
+    const frame = lines.join("\n");
+    assert.equal(frame.split("Bun fixture").length - 1, 1);
+    assert.equal(frame.split("CAMPAIGN").length - 1, 1);
+    assert.doesNotMatch(
+      frame,
+      /MISSION \/\/|STATUS|No tool call yet|Agent starts only/,
+    );
+  }
+});
+
+test("successful startup environment inspection appears only in Operator, not native notifications or status", async () => {
+  const mock = mockPi();
+  await controllerExtension({
+    config: defaults(),
+    demo: true,
+    autoInspect: true,
+    inspectEnvironment: async () => ({
+      platform: "win32",
+      runtime: "Bun fixture",
+      piVersion: "1.5.0",
+      gameSource: "fixture-game",
+      dlc: true,
+      prepared: true,
+      problems: [],
+    }),
+    persist: async () => {},
+  })(mock.pi);
+  try {
+    await mock.handlers.get("session_start")!({}, mock.ctx);
+    await delay(0);
+    const frame = mock.widgets.get("bench.dashboard").render(120).join("\n");
+    assert.equal(mock.notices.length, 0);
+    assert.equal(frame.split("Bun fixture").length - 1, 1);
+    assert.match(frame, /Local prerequisites OK/);
+    assert.doesNotMatch(frame, /game found|DLC found|STATUS/);
+  } finally {
+    await mock.handlers.get("session_shutdown")!();
+  }
 });
 
 test("TPS is explicit about unknown values and shows real zero, never NaN or Infinity", () => {
@@ -130,6 +192,8 @@ function mockPi() {
   let active = ["bash"];
   let editor = "";
   const choices: string[] = [];
+  const inputs: (string | undefined)[] = [];
+  const dialogs: { title: string; options: string[] }[] = [];
   const theme = {
     fg: (_color: string, text: string) => text,
     bg: (_color: string, text: string) => text,
@@ -153,7 +217,11 @@ function mockPi() {
           name,
           factory({ requestRender() {}, terminal: { rows: 36 } }, theme),
         ),
-      select: async () => choices.shift(),
+      select: async (title: string, options: string[]) => {
+        dialogs.push({ title, options });
+        return choices.shift();
+      },
+      input: async () => inputs.shift(),
       confirm: async () => false,
     },
   };
@@ -172,7 +240,18 @@ function mockPi() {
     getActiveTools: () => active,
     getThinkingLevel: () => "high",
   };
-  return { pi, ctx, commands, handlers, providers, widgets, notices, choices };
+  return {
+    pi,
+    ctx,
+    commands,
+    handlers,
+    providers,
+    widgets,
+    notices,
+    choices,
+    inputs,
+    dialogs,
+  };
 }
 test("native dashboard handles narrow terminals, wide text and terminal control injection", () => {
   const state = {
@@ -192,8 +271,8 @@ test("native dashboard handles narrow terminals, wide text and terminal control 
   const frame = dashboardLines(state, defaults(), true, 150).join("\n");
   assert.match(frame, /SIMULATION/);
   assert.match(frame, /01:01/);
-  assert.match(frame, /Not an OS sandbox/);
   assert.match(frame, /DLC not scored/);
+  assert.doesNotMatch(frame, /MISSION \/\/|STATUS/);
 });
 test("native controller does not replace login/model; it blocks prompts, host shell and tools", async () => {
   const mock = mockPi();
@@ -207,7 +286,8 @@ test("native controller does not replace login/model; it blocks prompts, host sh
     assert.deepEqual(mock.pi.getActiveTools(), []);
     assert.equal(mock.commands.has("login"), false);
     assert.equal(mock.commands.has("model"), false);
-    for (const name of ["provider", "start", "stop", "test", "bench"])
+    assert.equal(mock.commands.has("settings"), false);
+    for (const name of ["config", "provider", "start", "stop", "test", "bench"])
       assert.ok(mock.commands.has(name));
     assert.equal(mock.handlers.get("input")!().action, "handled");
     assert.equal(mock.handlers.get("tool_call")!().block, true);
@@ -220,7 +300,10 @@ test("native controller does not replace login/model; it blocks prompts, host sh
     );
     mock.choices.push("Refresh model list");
     await mock.commands.get("provider").handler("", mock.ctx);
-    assert.match(mock.notices.at(-1)!, /no catalog request/);
+    assert.match(
+      mock.widgets.get("bench.dashboard").render(120).join("\n"),
+      /no catalog request/,
+    );
   } finally {
     await mock.handlers.get("session_shutdown")!();
   }
@@ -230,8 +313,10 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
   let starts = 0;
   let stops = 0;
   let finish: (() => void) | undefined;
+  const snapshots: ReturnType<typeof defaults>[] = [];
   class FakeRunner extends EventEmitter {
-    async run() {
+    async run(config: ReturnType<typeof defaults>) {
+      snapshots.push(config);
       starts++;
       this.emit("phase", "RUNNING");
       this.emit("activity", "thinking");
@@ -279,6 +364,18 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
     assert.match(frame, /TPS 50\.0/);
     await mock.commands.get("bench").handler("60 10 1000", mock.ctx);
     assert.match(mock.notices.at(-1)!, /stop before changing budgets/);
+    for (const args of ["knowledge L0", "observation text+image", ""]) {
+      await mock.commands.get("config").handler(args, mock.ctx);
+      assert.match(
+        mock.notices.at(-1)!,
+        /stop before changing benchmark settings/,
+      );
+    }
+    assert.equal(
+      mock.dialogs.length,
+      0,
+      "No settings dialogs while an operation is active.",
+    );
     assert.match(
       mock.widgets.get("bench.dashboard").render(120).join("\n"),
       /3 \/ 1,500/,
@@ -286,15 +383,35 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
     );
     await mock.commands.get("stop").handler("", mock.ctx);
     assert.equal(stops, 2); // Operation AbortSignal and explicit owned-run cancellation are idempotent.
-    assert.match(mock.notices.at(-1)!, /cleanup finished/);
+    assert.match(
+      mock.widgets.get("bench.dashboard").render(120).join("\n"),
+      /cleanup finished/,
+    );
     await mock.commands.get("bench").handler("60 10 1000", mock.ctx);
+    await mock.commands.get("config").handler("knowledge L0", mock.ctx);
+    await mock.commands
+      .get("config")
+      .handler("observation text+image", mock.ctx);
     const stopped = mock.widgets.get("bench.dashboard").render(120).join("\n");
     assert.match(stopped, /CANCELLED/);
     assert.match(stopped, /TPS 48\.0/);
     assert.match(stopped, /3 \/ 1,500/);
+    assert.match(
+      stopped,
+      /L1 · text/,
+      "Completed metrics must retain the old knowledge/observation snapshot.",
+    );
+    assert.equal(snapshots[0]!.knowledge, "L1");
+    assert.equal(snapshots[0]!.observation, "text");
     await mock.commands.get("start").handler("", mock.ctx);
     await delay(0);
     assert.equal(starts, 2);
+    assert.equal(snapshots[1]!.knowledge, "L0");
+    assert.equal(snapshots[1]!.observation, "text+image");
+    assert.match(
+      mock.widgets.get("bench.dashboard").render(120).join("\n"),
+      /L0 · text\+image/,
+    );
     assert.match(
       mock.widgets.get("bench.dashboard").render(120).join("\n"),
       /3 \/ 10/,
@@ -326,6 +443,161 @@ test("native bench command validates budgets and persists only non-secret settin
     await mock.handlers.get("session_shutdown")!();
   }
 });
+test("native config menu restores knowledge, observation, budgets and local paths with immediate non-secret persistence", async () => {
+  const mock = mockPi();
+  const saved: ReturnType<typeof defaults>[] = [];
+  await controllerExtension({
+    config: defaults(),
+    demo: true,
+    persist: async (value) => {
+      saved.push(value);
+    },
+  })(mock.pi);
+  try {
+    await mock.handlers.get("session_start")!({}, mock.ctx);
+    mock.choices.push(
+      "Knowledge · L1",
+      benchSetting("knowledge").choices![0]!.label,
+      "Observation · text",
+      benchSetting("observation").choices![1]!.label,
+      "Wall budget (seconds) · 7200",
+      "Hacknet source folder · Auto-detect",
+    );
+    mock.inputs.push("60", "D:\\Game Library\\Hacknet");
+    await mock.commands.get("config").handler("", mock.ctx);
+    assert.equal(saved.length, 4);
+    assert.equal(saved[0]!.knowledge, "L0");
+    assert.equal(saved[1]!.observation, "text+image");
+    assert.equal(saved[2]!.wallTimeSeconds, 60);
+    assert.equal(saved[3]!.gameSource, "D:\\Game Library\\Hacknet");
+    assert.equal("keyEnv" in saved[3]!, false);
+    assert.equal("apiKey" in saved[3]!, false);
+    assert.ok(
+      mock.dialogs.some((dialog) => dialog.options.includes("Knowledge · L0")),
+    );
+    assert.ok(
+      mock.dialogs.some((dialog) =>
+        dialog.options.includes("Observation · text+image"),
+      ),
+    );
+    assert.match(
+      mock.widgets.get("bench.dashboard").render(120).join("\n"),
+      /L0 · text\+image/,
+    );
+    for (const width of [40, 55, 80, 100])
+      assert.match(deckFooter(width).join("\n"), /\/config/);
+    assert.deepEqual(mock.pi.getActiveTools(), []);
+    assert.equal(
+      mock.notices.length,
+      0,
+      "Routine config feedback must not duplicate native notices.",
+    );
+  } finally {
+    await mock.handlers.get("session_shutdown")!();
+  }
+});
+
+test("native config supports direct values and cancellation, rejects invalid/secret/provider fields without saving", async () => {
+  const mock = mockPi();
+  const saved: ReturnType<typeof defaults>[] = [];
+  await controllerExtension({
+    config: defaults(),
+    demo: true,
+    persist: async (value) => {
+      saved.push(value);
+    },
+  })(mock.pi);
+  try {
+    await mock.handlers.get("session_start")!({}, mock.ctx);
+    for (const args of ["", "knowledge", "gameSource"])
+      await mock.commands.get("config").handler(args, mock.ctx);
+    assert.equal(
+      saved.length,
+      0,
+      "Esc cancels menus and inputs without saving.",
+    );
+    for (const args of [
+      "knowledge L2",
+      "observation image",
+      "maxSteps 0",
+      "contextWindow 65536",
+      "maxOutputTokens 65536",
+      "apiKey do-not-store",
+      "baseUrl https://other.example/v1",
+    ]) {
+      // The first context-window change is valid; the output limit equal to it must fail.
+      await mock.commands.get("config").handler(args, mock.ctx);
+    }
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0]!.contextWindow, 65536);
+    assert.ok(mock.notices.some((text) => /Invalid Knowledge/.test(text)));
+    assert.ok(
+      mock.notices.some((text) => /Unknown benchmark setting/.test(text)),
+    );
+    assert.ok(mock.notices.every((text) => !text.includes("do-not-store")));
+    await mock.commands.get("config").handler("knowledge l0", mock.ctx);
+    await mock.commands
+      .get("config")
+      .handler("observation text+image", mock.ctx);
+    assert.equal(saved.at(-1)!.knowledge, "L0");
+    assert.equal(saved.at(-1)!.observation, "text+image");
+    assert.match(
+      mock.widgets.get("bench.dashboard").render(120).join("\n"),
+      /Vision model required/,
+    );
+    assert.deepEqual(
+      mock.commands
+        .get("config")
+        .getArgumentCompletions("knowledge L")
+        .map((item: any) => item.value),
+      ["knowledge L0", "knowledge L1"],
+    );
+  } finally {
+    await mock.handlers.get("session_shutdown")!();
+  }
+});
+
+test("native config rechecks the operation guard after a prompt returns", async () => {
+  const mock = mockPi();
+  let saved = 0;
+  let finish: (() => void) | undefined;
+  class FakeRunner extends EventEmitter {
+    async run() {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return { status: "cancelled", runId: "fixture", steps: 0, wallMs: 0 };
+    }
+    stop() {
+      finish?.();
+    }
+  }
+  await controllerExtension({
+    config: defaults(),
+    demo: true,
+    persist: async () => {
+      saved++;
+    },
+    makeRunner: () => new FakeRunner() as unknown as RunController,
+  })(mock.pi);
+  try {
+    await mock.handlers.get("session_start")!({}, mock.ctx);
+    mock.ctx.ui.select = async () => {
+      await mock.commands.get("start").handler("", mock.ctx);
+      await delay(0);
+      return benchSetting("knowledge").choices![0]!.label;
+    };
+    await mock.commands.get("config").handler("knowledge", mock.ctx);
+    assert.equal(saved, 0);
+    assert.match(
+      mock.notices.at(-1)!,
+      /stop before changing benchmark settings/,
+    );
+  } finally {
+    await mock.handlers.get("session_shutdown")!();
+  }
+});
+
 test("secret-only adapter masks typing/paste, preserves native login orchestration and rejects command keys", async () => {
   const adapter = new NativeSecretPrompts();
   let component: any;

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { temporaryDirectory } from "./fixtures.js";
 import path from "node:path";
-import { createJail } from "../src/pi/jail.js";
+import { createJail, SYSTEM_PROMPT, CHEATSHEET } from "../src/pi/jail.js";
 import { defaults } from "../src/config.js";
 import { providerCatalog, steamLibraryPaths } from "../src/environment.js";
 import { PLAYER_TOOLS } from "../src/core/safety.js";
@@ -46,6 +46,47 @@ test("isolated pi config never stores credentials or discovers global extensions
     await rm(dir, { recursive: true, force: true });
   }
 });
+test("knowledge/observation settings reach the isolated prompt and exact text/image player loadout", async () => {
+  const dir = await temporaryDirectory("jail-modes-");
+  try {
+    for (const knowledge of ["L0", "L1"] as const) {
+      for (const observation of ["text", "text+image"] as const) {
+        const runDir = path.join(dir, `${knowledge}-${observation}`);
+        const jail = await createJail(
+          { ...defaults(), knowledge, observation },
+          runDir,
+          "fixture-secret",
+          "fixture-pipe",
+          "fixture-token",
+        );
+        const prompt = jail.args[jail.args.indexOf("--system-prompt") + 1];
+        assert.equal(
+          prompt,
+          SYSTEM_PROMPT + (knowledge === "L1" ? "\n\n" + CHEATSHEET : ""),
+        );
+        const tools = jail.args[jail.args.indexOf("--tools") + 1]!.split(",");
+        assert.deepEqual(tools, [
+          ...PLAYER_TOOLS,
+          ...(observation === "text+image" ? ["hn_screenshot"] : []),
+        ]);
+        assert.equal(
+          jail.env.HACKINGBENCH_IMAGES,
+          observation === "text+image" ? "1" : "0",
+        );
+        const models = JSON.parse(
+          await readFile(path.join(runDir, "pi-agent", "models.json"), "utf8"),
+        );
+        assert.deepEqual(
+          models.providers.bench.models[0].input,
+          observation === "text+image" ? ["text", "image"] : ["text"],
+        );
+      }
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("pi-provider import reads only safe model metadata, not credentials or commands", async () => {
   const dir = await temporaryDirectory("catalog-");
   try {

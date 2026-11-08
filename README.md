@@ -43,7 +43,7 @@ bun run start
 1. `/provider`：选择 CommandCode / OpenAI / Anthropic，或填写兼容接口的协议与 Base URL。
 2. 编辑器会预填 `/login <项目 endpoint ID>`，按 Enter 进入 **pi 原生登录流程**；密钥输入遮罩并保存到项目 `auth.json`。
 3. 登录后自动获取模型列表；使用原生 `/model` 搜索、选择远端返回的准确模型 ID。
-4. 使用原生 `/thinking high` 等命令设置思考级别；可用 `/bench 7200 1500 2000000` 设置预算。
+4. 使用原生 `/thinking high` 等命令设置思考级别；用 `/config` 设置 L0/L1、text/text+image、预算和本地路径，也可 `/bench 7200 1500 2000000` 一次设置三项预算。
 5. `/test` 经确认后用无工具、隔离 pi 检查连接；`/setup` 可先准备游戏副本。
 6. **只有 `/start` 才会开始尝试**：preflight → 必要的 setup → 项目游戏副本 → 新账号 → 工具集握手 → LLM 游玩。`/stop` 请求取消并等待 owned-process 清理。
 
@@ -74,27 +74,53 @@ API 支持：
 
 ## 操作
 
-| 命令                           | 行为                                                     |
-| ------------------------------ | -------------------------------------------------------- |
-| `/provider`                    | 配置 endpoint、刷新列表或手动模型 ID；不在此输入密钥     |
-| `/login`、`/logout`            | **pi 原生**认证/移除项目凭据                             |
-| `/model`、`/thinking`          | **pi 原生**模型搜索选择、思考级别；选择同步到 bench 配置 |
-| `/bench [秒数 工具数 token数]` | 查看/修改预算；其他非敏感选项在 `runtime/bench.json`     |
-| `/test`                        | 确认后执行小型 API 连接测试，不启动游戏                  |
-| `/setup`、`/doctor`            | 准备项目副本 / 重新检测环境                              |
-| `/start`                       | 后台开始一次尝试；demo 模式只播放合成轨迹                |
-| `/stop`                        | 取消目录获取、preflight 或 run，等待自己创建的进程清理   |
-| `/report`                      | 查看实验性汇总                                           |
-| `/quit`                        | 原生退出并清理当前操作                                   |
+| 命令                           | 行为                                                                 |
+| ------------------------------ | -------------------------------------------------------------------- |
+| `/provider`                    | 配置 endpoint、刷新列表或手动模型 ID；不在此输入密钥                 |
+| `/login`、`/logout`            | **pi 原生**认证/移除项目凭据                                         |
+| `/model`、`/thinking`          | **pi 原生**模型搜索选择、思考级别；选择同步到 bench 配置             |
+| `/config [字段 [值]]`          | 原生菜单设置知识/观测、预算、上下文/输出限制及本地路径；支持参数补全 |
+| `/bench [秒数 工具数 token数]` | 查看/一次修改三项预算                                                |
+| `/test`                        | 确认后执行小型 API 连接测试，不启动游戏                              |
+| `/setup`、`/doctor`            | 准备项目副本 / 重新检测环境                                          |
+| `/start`                       | 后台开始一次尝试；demo 模式只播放合成轨迹                            |
+| `/stop`                        | 取消目录获取、preflight 或 run，等待自己创建的进程清理               |
+| `/report`                      | 查看实验性汇总                                                       |
+| `/quit`                        | 原生退出并清理当前操作                                               |
 
 `/start` 不占住编辑器，运行期间可输入 `/stop`。请不要把原生 Esc 当成后台 run 的停止键。setup 的复制/下载/编译目前要等阶段完成，其他取消通过 AbortSignal、RPC abort 和 owned-PID 清理处理。模型/预算修改不改变已经开始的尝试；每个 run 使用启动时的快照。不要直接强杀工作台，否则可能留下项目游戏或锁文件。
+
+### 知识与观测设置
+
+输入 **`/config`** 打开工作台设置菜单，↑↓ 选择、Enter 修改，每次确认立即保存到非敏感的 `runtime/bench.json`。Esc 取消当前输入；在主菜单按 Esc 返回面板，已经保存的更改不撤销。不需要手动编辑 JSON。
+
+| 选项                          | 含义                                                                                                                                   |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Knowledge: **L0**             | 不附额外命令速查，由模型通过游戏内 help/教程学习；仍保留基本目标、工具说明与安全约束                                                   |
+| Knowledge: **L1**（默认）     | 额外提供精简 Hacknet 命令速查；不增加宿主工具权限                                                                                      |
+| Observation: **text**（默认） | 文字观测，不向玩家开放截图工具                                                                                                         |
+| Observation: **text+image**   | 保留文字工具并增加 `hn_screenshot`，只捕获游戏 framebuffer，不截图桌面；**必须选用支持图像输入的模型**，不因切换设置就自动获得视觉能力 |
+
+也可以直接设置，字段名和值均可用原生补全：
+
+```text
+/config knowledge L0
+/config knowledge L1
+/config observation text
+/config observation text+image
+```
+
+菜单还包括墙钟、工具和 token 预算、上下文/单次输出限制、Hacknet 来源目录和 pi.exe 路径。上下文/输出限制须符合实际模型能力；路径输入留空恢复自动检测，更换游戏来源不会自动重建已准备的副本。API、密钥、模型和思考等级仍分别使用 `/provider`、`/login`、`/model`、`/thinking`；**原生 `/settings` 是 pi 自身设置，不替代 `/config`**。
+
+有后台任务时先 `/stop` 再修改 `/config`；设置菜单明确显示 **next run**。已完成尝试的面板保留原启动配置，新设置用于下一次 `/start`，不重标旧结果，也不会自动开始游戏或 API 请求。
 
 ### Hacknet 原生控制台
 
 保留 pi 原生登录、模型选择、命令补全和输入编辑器，恢复 v0.1 的青绿 / 橙色配色与圆角分区。主题仅在本工作台内注册，不修改全局 pi 配置。
 
 - 宽屏：左侧 **Operator**，右侧 **Agent Activity + Live Terminal**，底部墙钟 / 工具 / token 预算条；预算条不是任务完成率。
-- **TPS** 与 LLM / 工具耗时放在 Activity 区，窄屏也保留 TPS；窗口变小时切换单栏，原生登录/模型弹窗打开时收起面板让位。
+- 主面板从终端首行开始，占用输入框之外的可用高度，不再受 36 行限高影响。登录、模型选择、多行输入和补全按实际高度分配空间，窄屏自动切换单栏；**TPS** 保留在 Activity 区。
+- 环境检测成功只在 **Operator / Environment** 显示一次；删除重复的 MISSION、默认 STATUS 和待机说明。原生警告/错误保留在面板下方最多 4 行的可滚动反馈区，不会再把主面板推到屏幕下半部。
 - TPS = **已成功完成且有可用 usage 的回复的输出 token 总数 ÷ 对应生成总秒数**，是加权平均，不是瞬时峰值。包含首 token 等待与思考耗时，排除游戏工具和清理耗时；reasoning tokens 是否计入输出数遵循服务商的 usage。
 - 未收到有效 usage 时显示 `TPS —`，不按文本长度估算；停止后保留最终值。DEMO 的数值是合成预览，不参与评分。真实结果新增 `outputTokens` / `generationMs` / `tpsSamples` / `outputTps` 字段。
 - 游戏观测优先提取玩家可见的终端行，保留有界的动作/观测记录，不把整段 JSON 当作终端内容；不增加玩家工具或宿主权限。
@@ -186,7 +212,7 @@ runtime/
 ## 验证
 
 ```powershell
-bun run check                        # TypeScript + 85 个单元/回归测试，无真实 API/游戏
+bun run check                        # TypeScript + 93 个单元/回归测试，无真实 API/游戏
 bun run smoke:tui                    # 原生 pi + ANSI 终端仿真、resize、登录/模型/TPS；生成静态预览
 bun run smoke:pi                     # 真实 pi 1.5 RPC + 本机假模型/假桥接，无真实 API/游戏
 bun run smoke:game                   # 显式启动项目内游戏 GUI，无 LLM/API/正式分数
@@ -194,8 +220,8 @@ bun run smoke:game                   # 显式启动项目内游戏 GUI，无 LLM
 
 已在本机验证：
 
-- Windows Bun 1.4.4 下 TypeScript 和 85 个测试通过，包含原防线、原生控制面、密钥遮罩、endpoint 绑定、模型目录安全、响应式面板，以及 TPS 的加权/缺失 usage/取消/失败处理。
-- 真实原生 `InteractiveMode` + 开发测试用 `@xterm/headless`：检查实际 ANSI viewport，验证面板、遮罩 `/login`、项目凭据写入/移除、原生模型选择弹窗和 high thinking、后台假 `/start` / `/stop`、55–140 列窗口 resize 和 TPS 保留；生成 `runtime/ui-preview/` 下的 HTML/text 预览。不启动游戏，不调用真实 API。
+- Windows Bun 1.4.4 下 TypeScript 和 93 个测试通过，包含原防线、原生控制面、密钥遮罩、endpoint 绑定、模型目录安全、响应式面板，以及 TPS 的加权/缺失 usage/取消/失败处理。新增 `/config` 菜单/参数/取消/校验/运行中锁定与配置快照回归，验证四种知识/观测组合确实改变隔离玩家的 prompt、图像输入声明及准确工具名单。
+- 真实原生 `InteractiveMode` + 开发测试用 `@xterm/headless`：检查实际 ANSI viewport，验证面板、遮罩 `/login`、项目凭据写入/移除、原生模型选择弹窗和 high thinking、后台假 `/start` / `/stop`、55–200 列 / 最高 70 行窗口 resize 和 TPS 保留；包含 168×54、200×70 大屏首行定位、环境摘要去重、多行编辑与补全检查，以及原生 `/config` 菜单、L0/L1、text/text+image 选择与 55×20 设置菜单；生成 `runtime/ui-preview/` 下的 HTML/text 预览。不启动游戏，不调用真实 API。
 - 真实 pi RPC 的加载、无工具 preflight、准确工具集握手、假模型发起 `hn_screen`、假桥接响应、token 统计；从回复 usage 验证 TPS 只用输出 token。断言 `high` 实际序列化为请求中的 `reasoning_effort: high`，以及阻塞中的 preflight 可以取消并等待 owned-process 清理。
 - 原版新账号、教程 Continue 的可见状态约束、普通 connect 命令推进教程、login 提示态的两段输入、终端观测、独立 XML 保存、游戏-only 截图、按 owned PID 清理。
 - 游戏 smoke 前后检查个人 Hacknet Accounts 与 Pathfinder 目录指纹，未发生变化。
