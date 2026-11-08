@@ -39,7 +39,8 @@ test('redaction, terminal escape filtering, and environment allowlist',()=>{
 test('non-secret config is validated and unknown key fields stripped',()=>{
   const config=configSchema.parse({apiKey:'not-persisted',secret:'not-persisted'});
   assert.equal('apiKey' in config,false); assert.equal('secret' in config,false);
-  assert.throws(()=>configSchema.parse({keyEnv:'!powershell'}));
+  assert.equal('keyEnv' in configSchema.parse({keyEnv:'!powershell'}),false);
+  assert.throws(()=>configSchema.parse({model:'!powershell'}));
   assert.throws(()=>configSchema.parse({wallTimeSeconds:-1}));
   assert.throws(()=>configSchema.parse({baseUrl:'http://not-local.example/v1'}));
   assert.throws(()=>configSchema.parse({contextWindow:16384,maxOutputTokens:32768}));

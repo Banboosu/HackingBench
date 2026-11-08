@@ -9,8 +9,9 @@ export class PiRpc extends EventEmitter {
   private pending = new Map<string, Pending>();
   private sequence = 0;
   private closed = false;
+  private stopping?: Promise<void>;
   start(executable: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }): void {
-    if (this.child) throw new Error('Pi process already started.');
+    if (this.child || this.closed) throw new Error('Pi process already started or stopped.');
     this.child = spawn(executable, args, { ...options, shell: false, windowsHide: true, stdio: ['pipe','pipe','pipe'] });
     const parser = new JsonLines(record => {
       if (record.type === 'response') {
@@ -50,14 +51,17 @@ export class PiRpc extends EventEmitter {
       });
     });
   }
-  async stop(): Promise<void> {
-    if (this.closed) return;
+  stop(): Promise<void> {
+    if (this.stopping) return this.stopping;
     this.closed = true;
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('Pi RPC stopped.')); }
     this.pending.clear();
-    if (!this.child) return;
     const child = this.child;
-    child.stdin.end();
-    await terminate(child);
+    this.stopping = (async () => {
+      if (!child) return;
+      child.stdin.end();
+      await terminate(child);
+    })();
+    return this.stopping;
   }
 }

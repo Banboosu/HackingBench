@@ -4,13 +4,12 @@
     "lib": ["ES2023"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["node", "react"]
+    "types": ["node"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "extension/**/*.ts", "test/**/*.ts", "test/**/*.tsx", "scripts/**/*.ts"]
 }

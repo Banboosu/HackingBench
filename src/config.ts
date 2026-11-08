@@ -1,6 +1,7 @@
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -12,8 +13,7 @@ export const configSchema = z.object({
   piExecutable: z.string().default(''),
   api: z.enum(['openai-completions', 'openai-responses', 'anthropic-messages']).default('openai-responses'),
   baseUrl: z.string().refine(value => { try { validateEndpoint(value); return true; } catch { return false; } }, 'Use an HTTPS API URL without credentials or query parameters.').default('https://api.openai.com/v1'),
-  model: z.string().min(1).max(256).default('gpt-4.1'),
-  keyEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).default('HACKINGBENCH_API_KEY'),
+  model: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:/@+\-]*$/).default('gpt-4.1'),
   thinking: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).default('off'),
   contextWindow: z.number().int().min(16384).max(2000000).default(128000),
   maxOutputTokens: z.number().int().min(256).max(65536).default(8192),
@@ -31,7 +31,7 @@ export async function loadConfig(): Promise<BenchConfig> {
 }
 export async function writeJson(file: string, data: unknown): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
+  const temp = `${file}.${randomUUID()}.tmp`;
   await writeFile(temp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
   await rename(temp, file);
 }

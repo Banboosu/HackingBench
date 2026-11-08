@@ -9,6 +9,7 @@ import type { RunResult } from '../src/runner.js';
 import { temporaryDirectory } from './fixtures.js';
 import { ROOT } from '../src/config.js';
 import { childEnvironment } from '../src/core/safety.js';
+import { PiRpc } from '../src/pi/rpc.js';
 
 test('journal redacts before JSON escaping, keeping valid JSONL',async()=>{
   const dir=await temporaryDirectory('journal-');
@@ -33,6 +34,17 @@ test('owned child command success, failure and timeout cleanup',async()=>{
   assert.equal(await command(process.execPath,['-e','process.stdout.write("OK")']),'OK');
   await assert.rejects(()=>command(process.execPath,['-e','process.stderr.write("expected failure");process.exit(3)']),/expected failure/);
   await assert.rejects(()=>command(process.execPath,['-e','setInterval(()=>{},1000)'],{timeout:40}),/timed out/);
+});
+test('concurrent RPC stop callers await the same owned-process cleanup',async()=>{
+  const rpc=new PiRpc();
+  rpc.start(process.execPath,['-e','process.stdin.resume();setInterval(()=>{},1000)'],{cwd:ROOT,env:childEnvironment()});
+  const pending=rpc.request('get_state');
+  const rejected=assert.rejects(pending,/stopped/);
+  const first=rpc.stop(); const second=rpc.stop();
+  assert.equal(first,second);
+  await Promise.all([first,second,rejected]);
+  await assert.rejects(()=>rpc.request('get_state'),/not running/);
+  assert.throws(()=>rpc.start(process.execPath,[],{cwd:ROOT,env:childEnvironment()}),/stopped/);
 });
 const result=(status:RunResult['status'],extra:Partial<RunResult>={}):RunResult=>({
   runId:'fixture',status,score:status==='success'?1:0,model:'test-model',api:'openai-completions',endpoint:'https://fake.example/v1',startedAt:'2026-01-01T00:00:00Z',wallMs:1000,

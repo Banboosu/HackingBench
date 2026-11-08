@@ -2,6 +2,9 @@ node_modules/
 dist/
 coverage/
 runtime/
+# Native pi credentials (including accidental copies)
+auth.json
+auth.json.*
 .env
 .env.*
 !.env.example

@@ -237,3 +237,26 @@ ok
 - 工具笼不构成 OS sandbox；没有自动提权/防火墙规则，强隔离仍需外部 Sandbox / VM。
 
 使用方式、可选截图、安全边界和恢复步骤见 `README.md` / `SECURITY.md`。
+
+## 11. 后续用户指示：改用 pi 原生 TUI 与项目认证
+
+本节记录新决定，**第 10 节的 Ink / 会话密钥描述属于历史版本**；不覆盖前文用户决策。
+
+### 已实现
+
+- 默认入口改为 pi 1.5.0 SDK 的 `InteractiveMode`，原生全屏编辑器、命令补全、`/login` / `/logout`、`/model` 和 `/thinking`；移除独立 Ink/React 配置页及其依赖。
+- 上方扩展 dashboard 显示真实 activity、墙钟、工具/token 预算、最近动作/assistant/游戏终端；没有伪造 mission 完成百分比。正常启动异步检测本机环境，不自动开始游玩。
+- 自有 `/provider`、`/start`、`/stop`、`/test`、`/bench`、`/doctor`、`/setup`、`/report`。`/start` 后台运行，编辑器保持可用；禁止重复 run，停止/退出等待 owned-process 清理。setup 阶段尚不能即时取消。
+- **登录流程和凭据存储直接复用 pi**，项目 agent directory 固定 `runtime/controller/`；凭据位于 `runtime/controller/auth.json`，不接触全局 `~/.pi/agent`。删除用户可见的 keyEnv / session-only 工作流。headless 与交互 run 从同一原生认证文件取 key，RPC 玩家内部仍用仅进程环境传递，不额外落盘。
+- 实测发现 pi 1.5.0 原生 `LoginDialog` 未处理 secret 遮罩；仅为 secret prompt 加原生 TUI Input 掩码适配，不重做认证/OAuth/存储。拒绝命令型/变量引用型 key。文件明文暂存，Windows 权限继承项目目录，不宣称加密。
+- provider ID 绑定完整 endpoint + API 协议，改地址不误发旧 key。CommandCode / OpenAI / Anthropic 预设及自定义兼容端点；原生登录后自动模型发现，原生 `/model` 搜索选择，支持目录重试和手动 ID。
+- 模型目录严格白名单解析，15 秒、2 MiB、10000 条上限；不跟随带认证的重定向，不打印 HTTP 错误 body，不导入远端 key/headers/执行配置，目录缓存按 endpoint 隔离。
+- 控制面工具集为空；普通输入、宿主 `!`/`!!` 和控制面模型请求均阻断。玩家继续走独立 Pi RPC + 受限 hn_* 扩展，没有继承原生界面的 provider/文件/shell 权限。
+- 当前 runner 仍仅支持三种兼容协议 + API key；原生其他 OAuth/账号登录尚未接入玩家，不把它们的 token 当通用 key 转发。
+
+### 验证
+
+- `bun run check`：TypeScript + **76 个测试通过**；新增原生控制面、遮罩/取消、endpoint 凭据绑定、安全模型目录、HTTP 重定向/错误/大小限制/取消等。
+- `bun run smoke:tui`：真实原生 InteractiveMode + 假终端 + 本机假模型目录；验证遮罩 `/login`、项目 auth.json 写入/移除、自动获取模型、原生 `/model` 与 high thinking、假 runner 的后台 `/start` / `/stop`。不调用真实 API，不启动游戏，不覆盖现有 bench 配置。
+- `bun run smoke:pi`：真实隔离 RPC + 本机假 SSE/bridge；现在还断言 **high 实际发为 `reasoning_effort: high`**，不是仅 UI 标签；阻塞的 preflight 可被取消，重复 `PiRpc.stop()` 共享清理 Promise，避免取消后返回时子进程尚未清理。
+- 未使用真实 CommandCode key；其 live catalog 中 `deepseek-v4.1-flash` 的准确 ID、协议兼容性和真实连接仍待验证。没有自动退回旧 v4，也没有真实 LLM 战役尝试。

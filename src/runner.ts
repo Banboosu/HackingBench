@@ -64,10 +64,10 @@ export class RunController extends EventEmitter {
     try {
       const env = await inspect(config);
       if (env.problems.length) throw new Error(env.problems.join('\n'));
-      if (!key) throw new Error(`No API key: set ${config.keyEnv} or enter a session-only key in Configure.`);
+      if (!key) throw new Error('No API key: use native /login in the HackingBench control deck first.');
       this.emit('phase','PREFLIGHT');
       safeLog('Checking model connectivity through isolated pi (no tools)…');
-      safeLog(await testProvider(config,key,env.pi!));
+      safeLog(await testProvider(config,key,env.pi!,signal));
       signal.throwIfAborted();
       this.emit('phase','SETUP'); await prepareGame(config,safeLog);
       signal.throwIfAborted();
@@ -121,12 +121,13 @@ export class RunController extends EventEmitter {
           }
         }
         if (e.type === 'extension_error') { error = e.error; this.finish('infra_error'); }
-        if (e.type === 'message_start' && e.message?.role === 'assistant') thinkingSince = performance.now();
+        if (e.type === 'message_start' && e.message?.role === 'assistant') { thinkingSince = performance.now(); this.emit('activity','thinking'); }
         if (e.type === 'message_update' && e.assistantMessageEvent?.type === 'text_delta') this.emit('assistant',e.assistantMessageEvent.delta);
         if (e.type === 'message_end' && e.message?.role === 'assistant') {
           if (thinkingSince !== undefined) { llmMs += performance.now() - thinkingSince; thinkingSince = undefined; }
           if (e.message.stopReason === 'error') lastProviderError = e.message.errorMessage ?? 'Provider error';
           else lastProviderError = '';
+          this.emit('activity','waiting for tools');
         }
         if (e.type === 'tool_execution_start') {
           calls.set(e.toolCallId,JSON.stringify([e.toolName,e.args]));
@@ -142,6 +143,7 @@ export class RunController extends EventEmitter {
           if (e.result?.details?.benchStatus === 'gave_up') this.finish('gave_up');
           else if (!this.stopping) void checkCompletion();
         }
+        if (e.type === 'agent_settled') this.emit('activity','settled');
         if (e.type === 'agent_settled' && !this.stopping && !limitPending && ready) {
           if (lastProviderError) { error = lastProviderError; this.finish('infra_error'); return; }
           settledWithoutTools = budget!.steps === lastStepAtSettle ? settledWithoutTools + 1 : 0;

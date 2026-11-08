@@ -36,21 +36,31 @@ bun run start
 
 工作台运行、依赖安装和测试统一使用 **Bun**：直接执行 TS/TSX，使用 `bun.lock` 和 `bun test`，不再依赖 tsx/npm 或宿主 Node。共享桥接代码有意保留 Bun 支持的 `node:*` 兼容 API，供独立 pi 扩展复用；不改动 pi 自身的实现。
 
-TUI 启动后检测 Windows Bun、pi 版本、Steam 游戏目录、DLC 和已准备的副本。首次没有密钥时进入配置页：
+现在直接复用 **pi 原生全屏 TUI**，不再使用独立 Ink 配置页。上方状态面板显示 LLM activity、墙钟、工具/token 预算、最近动作和游戏观测；下方保留 pi 原生编辑器与斜杠命令。不会伪造未经验证的任务完成百分比。
 
-1. 设置 API 协议、Base URL、Model ID；协议必须和服务商匹配。
-2. 使用环境变量密钥，或填写 **Session-only key**（遮罩输入，仅本次进程内存）。
-3. `Ctrl+S` 保存非敏感配置，`Esc` 返回主界面。
-4. 可先按 **T** 做真实 API 连接测试、**P** 准备游戏副本。
-5. **S / Start** 才会开始真实尝试：preflight → 必要的 setup → 项目游戏副本 → 新账号 → 工具集握手 → LLM 游玩。
+正常启动后自动检测 Windows Bun、pi、Steam 游戏目录和 DLC。首次配置流程：
 
-**T 和真实 Start 的 preflight 会调用所选 API，可能计费。** 启动 TUI、Doctor、Prepare、Demo 不调用真实模型。不要把真实密钥发到聊天或写进仓库；在本机界面输入或使用环境变量。
+1. `/provider`：选择 CommandCode / OpenAI / Anthropic，或填写兼容接口的协议与 Base URL。
+2. 编辑器会预填 `/login <项目 endpoint ID>`，按 Enter 进入 **pi 原生登录流程**；密钥输入遮罩并保存到项目 `auth.json`。
+3. 登录后自动获取模型列表；使用原生 `/model` 搜索、选择远端返回的准确模型 ID。
+4. 使用原生 `/thinking high` 等命令设置思考级别；可用 `/bench 7200 1500 2000000` 设置预算。
+5. `/test` 经确认后用无工具、隔离 pi 检查连接；`/setup` 可先准备游戏副本。
+6. **只有 `/start` 才会开始尝试**：preflight → 必要的 setup → 项目游戏副本 → 新账号 → 工具集握手 → LLM 游玩。`/stop` 请求取消并等待 owned-process 清理。
+
+**`/test` 和真实 `/start` 的 preflight 可能计费。** 启动界面、环境检测、准备游戏不发送模型推理请求；登录和模型选择会访问所选服务商的认证/模型目录。普通输入不会发送给模型，`!`/`!!` 宿主 shell 被禁用。不要把真实密钥发到聊天或写进仓库。
 
 ### 凭据与模型目录
 
-推荐先在当前 PowerShell 会话设置 `HACKINGBENCH_API_KEY`，或在配置页更改变量名。`bunfig.toml` 已禁用 Bun 自动读取 `.env`，也不复制 `~/.pi/agent/auth.json` 或 `relays.json`。
+无需设置密钥环境变量，也无需输入变量名。原生 `/login` / `/logout` 管理项目专属 **`runtime/controller/auth.json`**；不复制、读取或修改 `~/.pi/agent/auth.json` 或 `relays.json`。该文件与 `runtime/` 已被 Git 忽略。
 
-**I / Import** 只读取 pi-provider 管理的 `~/.pi/agent/models.json` 中的 provider 名称、API、Base URL、model ID；不读取/执行 `!command`，不复制 key 或 headers。需要自定义认证 headers 的服务商目前不支持直接导入认证配置。
+- 使用 pi 原生凭据格式。**这是本地明文暂存，不是加密保险库**；Windows 访问权限继承项目目录，勿共享或上传整个 `runtime/`。
+- endpoint ID 包含完整 Base URL 和协议的摘要。更换服务商、路径或协议后不会把旧 key 发到新地址；原凭据仍可通过 `/logout` 移除。
+- pi 1.5.0 原生登录的 secret 标记未遮罩显示，本项目仅适配 secret 输入控件；认证流程与存储仍由 pi 完成。拒绝命令型/变量引用型 key。
+- 登录后自动读取 `/models`，只接纳经过校验的模型元数据；不执行远端 `!command`，不导入 headers、凭据或执行配置。限制超时、响应大小，拒绝认证请求重定向。
+- 获取失败时可 `/provider` → Refresh model list 重试，或选择 Manual model ID；手动条目标为未经目录验证。
+- **当前 run 仅支持 `/provider` 配置的三种兼容协议与 API key。** 原生界面仍可展示其他账号/OAuth 登录，但它们尚未接入受限 runner；不会把 OAuth token 简单当成通用 API key。
+
+CommandCode 预设为 `https://api.commandcode.ai/provider/v1` + Chat Completions。请从实际目录确认 `deepseek-v4.1-flash` 的准确 ID，再 `/thinking high`；尚未用真实 CommandCode key 验证，不会自动退回旧模型。`bun run start models` 仍可显式只读导入 pi-provider 的非敏感模型元数据；不会在玩家 agent 中加载 pi-provider。
 
 API 支持：
 
@@ -64,18 +74,20 @@ API 支持：
 
 ## 操作
 
-| 快捷键 | 行为 |
+| 命令 | 行为 |
 |---|---|
-| **S** | Start，新账号开始一次真实尝试；demo 模式下只播放合成轨迹 |
-| **C** | 配置 API、模型、密钥来源、预算、观测模式 |
-| **T** | 用无工具、隔离 pi 做真实 API preflight |
-| **P** | 复制并准备项目内游戏，不启动游戏 |
-| **D** | 重新检测环境 |
-| **I** | 导入 pi-provider 的非敏感模型元数据 |
-| **Esc** | 请求停止当前 run；配置页中返回/取消编辑 |
-| **Q / Ctrl+C** | 退出；有 run 时先清理自己启动的进程 |
+| `/provider` | 配置 endpoint、刷新列表或手动模型 ID；不在此输入密钥 |
+| `/login`、`/logout` | **pi 原生**认证/移除项目凭据 |
+| `/model`、`/thinking` | **pi 原生**模型搜索选择、思考级别；选择同步到 bench 配置 |
+| `/bench [秒数 工具数 token数]` | 查看/修改预算；其他非敏感选项在 `runtime/bench.json` |
+| `/test` | 确认后执行小型 API 连接测试，不启动游戏 |
+| `/setup`、`/doctor` | 准备项目副本 / 重新检测环境 |
+| `/start` | 后台开始一次尝试；demo 模式只播放合成轨迹 |
+| `/stop` | 取消目录获取、preflight 或 run，等待自己创建的进程清理 |
+| `/report` | 查看实验性汇总 |
+| `/quit` | 原生退出并清理当前操作 |
 
-setup 和 preflight 当前不是即时可取消的；退出请求会等待该阶段完成或超时。run 开始后通过 RPC abort 和 owned-PID 清理停止。不要直接强杀工作台，否则可能留下项目内的游戏或锁文件。
+`/start` 不占住编辑器，运行期间可输入 `/stop`。请不要把原生 Esc 当成后台 run 的停止键。setup 的复制/下载/编译目前要等阶段完成，其他取消通过 AbortSignal、RPC abort 和 owned-PID 清理处理。模型/预算修改不改变已经开始的尝试；每个 run 使用启动时的快照。不要直接强杀工作台，否则可能留下项目游戏或锁文件。
 
 ### 无风险预览与命令行
 
@@ -85,7 +97,7 @@ bun run start --demo --headless          # 可脚本运行的合成预览
 bun run doctor                         # 只读检测，不调用 API
 bun run setup                          # 复制、下载、patch、编译，不启动游戏
 bun run start models                   # 只输出模型元数据
-bun run start run                      # 使用已保存配置 + 环境变量密钥开始真实尝试
+bun run start run                      # 使用已保存配置 + 项目原生 /login 凭据开始真实尝试
 bun run start report                   # 汇总真实结果
 ```
 
@@ -139,6 +151,10 @@ Demo 的成功只表示预览结束，`demo: true`、`score: 0`，不进入结�
 ```text
 runtime/
   bench.json                       非敏感配置
+  controller/
+    auth.json                      pi 原生项目凭据；明文，禁止分享/提交
+    <endpoint>.catalog.json        经校验的非敏感模型目录缓存
+    workspace/                     原生控制面空 workspace；无宿主工具
   game/                            独立、离线 patch 后的游戏副本
   runs/<id>/
     accounts/                      这个账号的独立 XML 存档
@@ -158,15 +174,17 @@ runtime/
 ## 验证
 
 ```powershell
-bun run check                        # TypeScript + 63 个单元/回归测试，无真实 API/游戏
+bun run check                        # TypeScript + 76 个单元/回归测试，无真实 API/游戏
+bun run smoke:tui                    # 原生 pi 登录/模型/UI + 本机假服务/假 runner
 bun run smoke:pi                     # 真实 pi 1.5 RPC + 本机假模型/假桥接，无真实 API/游戏
 bun run smoke:game                   # 显式启动项目内游戏 GUI，无 LLM/API/正式分数
 ```
 
 已在本机验证：
 
-- Windows Bun 1.4.4 下 TypeScript 和 63 个测试通过：命令对抗、JSONL Unicode/分片、鉴权/超时/取消、工具集、预算、路径链接、凭据脱敏、报告、TUI、Bun 版本门槛和禁用 .env 自动加载。
-- 真实 pi RPC 的加载、无工具 preflight、准确工具集握手、假模型发起 `hn_screen`、假桥接响应、token 统计。
+- Windows Bun 1.4.4 下 TypeScript 和 76 个测试通过，包含原防线及原生控制面、密钥遮罩、endpoint 绑定、模型目录解析、HTTP 错误/重定向/超时取消等。
+- 真实原生 `InteractiveMode`：遮罩 `/login`、项目凭据写入/移除、自动获取模型、原生 `/model` 和 high thinking、后台假 `/start` / `/stop`；不启动游戏，不调用真实 API。
+- 真实 pi RPC 的加载、无工具 preflight、准确工具集握手、假模型发起 `hn_screen`、假桥接响应、token 统计；断言 `high` 实际序列化为请求中的 `reasoning_effort: high`，以及阻塞中的 preflight 可以取消并等待 owned-process 清理。
 - 原版新账号、教程 Continue 的可见状态约束、普通 connect 命令推进教程、login 提示态的两段输入、终端观测、独立 XML 保存、游戏-only 截图、按 owned PID 清理。
 - 游戏 smoke 前后检查个人 Hacknet Accounts 与 Pathfinder 目录指纹，未发生变化。
 
@@ -177,16 +195,16 @@ bun run smoke:game                   # 显式启动项目内游戏 GUI，无 LLM
 - **提示使用旧隔离 patch**：先确保没有工作台 run，把项目 `runtime/game/` 移开，再 `bun run setup`。不要对 Steam 原件运行 patch 脚本。
 - **`setup.lock` / `active-run.lock` 已存在**：先检查对应工作台是否仍活着；异常退出后确认项目游戏和 pi 子进程都已结束，再手动移除该锁。程序不会按游戏进程名清场。
 - **`game.staging/` 已存在**：表示安装被中断。检查后移开这个项目临时目录，再重试；程序不会擅自覆盖未知目录。
-- **API 401/协议错误**：检查变量名、Base URL、接口协议和精确 model ID；先使用 T。不要把 key 放进 URL。
+- **API 401/协议错误**：检查 `/provider` 的 Base URL/协议、原生 `/login` 的 endpoint ID、精确 model ID；先 `/test`。不要把 key 放进 URL。更换 endpoint 后必须单独登录。
 - **提示需要 Bun / 意外使用 WSL Bun**：从 Windows PowerShell 启动 `bun run doctor`，确认输出 `platform: win32`、`runtime: Bun …`。不要用 `node` 或 `tsx` 启动工作台。
 
 ## 隔离边界与上游
 
 这是 **工具笼 + 独立游戏/存档 + 进程卫生**，**不是 OS sandbox**。游戏和 pi 仍以你的 Windows 用户权限执行；无法保证第三方原生插件漏洞、恶意 endpoint 或本地同用户攻击下的系统隔离。需要强安全边界时应放入 Windows Sandbox / VM。详见 [SECURITY.md](SECURITY.md)。项目不提权、不配置防火墙、不修改全局 pi 设置、不按进程名终止游戏。
 
-- [pi-coding-agent](https://github.com/earendil-works/pi)：RPC/模型适配与 agent 循环。
+- [pi-coding-agent](https://github.com/earendil-works/pi)：原生 TUI/登录/模型选择，以及独立 RPC 玩家 agent。
 - [HNPF-MCP](https://github.com/LDTchara/HNPF-MCP)：固定 commit `46b13a132f84939ab26f2e2137001824d76e8f61` 的 bridge 源码作为 Git 子模块复用；不暴露原生 MCP server。
-- [pi-provider](https://github.com/BlueOcean223/pi-provider)：只作为非敏感模型目录来源，不在 benchmark agent 中加载。
+- [pi-provider](https://github.com/BlueOcean223/pi-provider)：模型发现体验参考及可选非敏感目录来源，不在 benchmark agent 中加载。
 - [Hacknet-Pathfinder](https://github.com/Arkhist/Hacknet-Pathfinder)：只安装到项目游戏副本。
 
 不分发 Hacknet 游戏文件。使用游戏及第三方组件时遵循各自许可。

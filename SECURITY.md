@@ -22,13 +22,17 @@ HackingBench 的默认边界是**模型工具限制、项目内游戏副本、�
 - 玩家观测不投影隐藏密码、Flag、未发现节点或 mission goals。特权 judge 与玩家工具分开。
 - 截图只读取游戏 framebuffer，不访问桌面捕获 API。
 - 工作台由 Windows 原生 Bun 执行，`bunfig.toml` 禁用自动 .env 加载；安装使用冻结的 `bun.lock` 并跳过 lifecycle scripts，不做运行时自动装包。
-- API key 仅由环境变量/会话内存注入子进程。provider 文件只保存环境变量引用；不把 key 放进 prompt、CLI 参数或非敏感配置。
+- 控制面复用 pi 原生 `/login` / `/logout`，凭据只暂存到项目 `runtime/controller/auth.json`（Git 忽略）。这是明文文件；Windows 权限继承项目目录，不提供加密或强制用户专属 DACL。API key 不写入 `bench.json`、prompt、CLI 参数或普通 run 文件。
+- endpoint ID 绑定完整 URL 与协议，更换 endpoint 后不会复用旧 key。玩家 RPC 子进程仍只通过内部环境变量获得本次 key，生成的 provider 文件只含变量引用；不要求用户配置变量名，不复制认证文件进 run 目录。
+- pi 1.5.0 原生登录未遮罩 secret 输入，本项目只替换 secret 输入渲染：保留原生登录/存储，屏幕只显示星号。启动前和输入时拒绝命令型/变量引用型 API key；不执行凭据中的 `!command`。
+- 原生 TUI 控制面没有激活工具，普通输入不触发模型；在模型传输入口再次拒绝推理请求，拦截 `!` / `!!` 宿主 shell。后台玩家仍在独立工具笼内，不因控制台的登录/provider 管理而增加权限。
+- 认证目录获取限制 HTTPS（本机可 HTTP）、15 秒/2 MiB/10000 条上限，拒绝重定向，只保存白名单模型字段；HTTP 失败不输出响应 body，不导入远端 headers/凭据/命令配置。
 - pi 会话只保存在内存，持久化事件由编排器统一脱敏；渲染游戏/模型文字前过滤终端控制字符。
 - 下载使用固定版本 + SHA-256；不运行更新器，不请求管理员权限。
 
 ## 不保证的事
 
-- 这不是网络访问控制。`--offline` 禁用 pi 自动联网，不会在 OS 层限制 pi/游戏的全部出站流量；所选模型 endpoint 仍接收模型请求。
+- 这不是网络访问控制。`--offline` / `PI_OFFLINE` 禁用后台自动联网，不会在 OS 层限制出站流量。原生登录和模型选择会显式访问认证/目录接口，`/test` 与玩家 agent 会访问所选模型 endpoint。
 - NamedPipe token 不防御同一 Windows 用户读取配置/进程环境；这里假设宿主和当前用户可信。
 - 静态工具白名单并不是对所有游戏命令/第三方插件的形式化安全证明。发现兼容问题时应收紧权限，不要临时开放 shell 或原生 MCP 工具。
 - 文件链接检查不能防御恶意并发进程的 TOCTOU 竞争。
@@ -39,6 +43,6 @@ HackingBench 的默认边界是**模型工具限制、项目内游戏副本、�
 
 ## 诊断与恢复
 
-不要公开 API key、pipe token 或未经检查的 `runtime/`。发生安全相关失败时停止 run，保留脱敏后的 `events.jsonl`、`result.json` 和版本指纹用于分析。不要为了“让测试通过”去掉存档根检查、加载全局 provider 扩展或直接暴露 HNPF 原生工具。
+不要公开 API key、OAuth token、pipe token 或未经检查的 `runtime/`，尤其是 `runtime/controller/auth.json`。原生界面可显示其他账号/OAuth 登录，但当前受限 runner 仅支持 `/provider` 配置的 API-key 兼容端点。发生安全相关失败时停止 run，保留脱敏后的 `events.jsonl`、`result.json` 和版本指纹用于分析。不要为了“让测试通过”去掉存档根检查、加载全局 provider 扩展或直接暴露 HNPF 原生工具。
 
 删除锁之前确认没有仍在运行的工作台，且项目副本/pi 子进程已经结束。只处理明确属于本项目的 PID；不要通过进程名批量结束 Hacknet。

@@ -17,11 +17,14 @@ const pi=await findExecutable('pi');
 if(!pi)throw new Error('pi.exe/ pi not found on PATH.');
 const seenTools: string[][]=[];
 let assertions: Error|undefined;
+let holdModel = false; let onHeldRequest: (() => void)|undefined;
 const model=http.createServer(async(req,res)=>{
   try {
     let body='';for await(const b of req)body+=b;
     const payload=JSON.parse(body);
     assert.equal(req.headers.authorization,'Bearer test-only-key');
+    assert.equal(payload.reasoning_effort,'high','Thinking high must be sent on the wire, not just displayed.');
+    if (holdModel) { onHeldRequest?.(); return; }
     const names=(payload.tools ?? []).map((t:any)=>t.function.name);
     seenTools.push(names);
     const toolReply=payload.messages?.some((m:any)=>m.role==='tool');
@@ -52,7 +55,7 @@ const game=net.createServer(socket=>{
 await mkdir(RUNTIME,{recursive:true});
 await new Promise<void>(resolve=>game.listen(pipe,resolve));
 const rpc=new PiRpc();
-const config={...defaults(),api:'openai-completions' as const,baseUrl:`http://127.0.0.1:${port}/v1`,model:'test-local'};
+const config={...defaults(),api:'openai-completions' as const,baseUrl:`http://127.0.0.1:${port}/v1`,model:'test-local',thinking:'high' as const};
 const folder=path.join(RUNTIME,'smoke-pi',randomUUID());
 const jail=await createJail(config,folder,'test-only-key',pipe,'fake-pipe-token');
 jail.env.HACKINGBENCH_MAX_STEPS='10';jail.env.HACKINGBENCH_DEADLINE=String(Date.now()+60000);
@@ -89,7 +92,16 @@ try {
   assert.ok(seenTools.some(names=>names.length===0),'Preflight had tools enabled.');
   for(const names of seenTools.filter(n=>n.length))assert.deepEqual([...names].sort(),[...PLAYER_TOOLS].sort());
   if(assertions)throw assertions;
-  console.log('PASS: actual pi 1.5 RPC + isolated provider + exact player-tool loadout + fake bridge tool roundtrip. No real API/game used.');
+  holdModel = true;
+  const controller = new AbortController();
+  const held = new Promise<void>(resolve => { onHeldRequest = resolve; });
+  const cancelled = testProvider(config,'test-only-key',pi,controller.signal);
+  const cancelObserved = cancelled.then(() => undefined, error => error as Error);
+  await Promise.race([held, new Promise<never>((_resolve, reject) => { const t = setTimeout(() => reject(new Error('Held preflight was not sent.')),15000); t.unref(); held.finally(() => clearTimeout(t)); })]);
+  const cancellingAt = performance.now(); controller.abort();
+  assert.match((await cancelObserved)?.message ?? '',/cancelled/);
+  assert.ok(performance.now() - cancellingAt < 5000, 'Preflight cancellation waited for model timeout.');
+  console.log('PASS: actual pi 1.5 RPC + high on wire + exact player-tool loadout + fake bridge + cancellable blocked preflight. No real API/game used.');
 } finally {
   if(timer)clearTimeout(timer);
   await rpc.stop();for(const s of sockets)s.destroy();
