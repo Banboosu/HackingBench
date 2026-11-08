@@ -1,0 +1,3 @@
+[submodule "vendor/hnpf-mcp"]
+	path = vendor/hnpf-mcp
+	url = https://github.com/LDTchara/HNPF-MCP.git
