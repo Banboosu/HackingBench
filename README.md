@@ -64,30 +64,42 @@ CommandCode 预设为 `https://api.commandcode.ai/provider/v1` + Chat Completion
 
 API 支持：
 
-| 配置值 | 接口 |
-|---|---|
-| `openai-responses` | Responses |
-| `openai-completions` | Chat Completions |
+| 配置值               | 接口               |
+| -------------------- | ------------------ |
+| `openai-responses`   | Responses          |
+| `openai-completions` | Chat Completions   |
 | `anthropic-messages` | Anthropic Messages |
 
 非本机地址必须使用 HTTPS；拒绝 URL 中的用户名、密码、query 和 fragment。对本机模型服务允许 `http://127.0.0.1:…/v1`。
 
 ## 操作
 
-| 命令 | 行为 |
-|---|---|
-| `/provider` | 配置 endpoint、刷新列表或手动模型 ID；不在此输入密钥 |
-| `/login`、`/logout` | **pi 原生**认证/移除项目凭据 |
-| `/model`、`/thinking` | **pi 原生**模型搜索选择、思考级别；选择同步到 bench 配置 |
-| `/bench [秒数 工具数 token数]` | 查看/修改预算；其他非敏感选项在 `runtime/bench.json` |
-| `/test` | 确认后执行小型 API 连接测试，不启动游戏 |
-| `/setup`、`/doctor` | 准备项目副本 / 重新检测环境 |
-| `/start` | 后台开始一次尝试；demo 模式只播放合成轨迹 |
-| `/stop` | 取消目录获取、preflight 或 run，等待自己创建的进程清理 |
-| `/report` | 查看实验性汇总 |
-| `/quit` | 原生退出并清理当前操作 |
+| 命令                           | 行为                                                     |
+| ------------------------------ | -------------------------------------------------------- |
+| `/provider`                    | 配置 endpoint、刷新列表或手动模型 ID；不在此输入密钥     |
+| `/login`、`/logout`            | **pi 原生**认证/移除项目凭据                             |
+| `/model`、`/thinking`          | **pi 原生**模型搜索选择、思考级别；选择同步到 bench 配置 |
+| `/bench [秒数 工具数 token数]` | 查看/修改预算；其他非敏感选项在 `runtime/bench.json`     |
+| `/test`                        | 确认后执行小型 API 连接测试，不启动游戏                  |
+| `/setup`、`/doctor`            | 准备项目副本 / 重新检测环境                              |
+| `/start`                       | 后台开始一次尝试；demo 模式只播放合成轨迹                |
+| `/stop`                        | 取消目录获取、preflight 或 run，等待自己创建的进程清理   |
+| `/report`                      | 查看实验性汇总                                           |
+| `/quit`                        | 原生退出并清理当前操作                                   |
 
 `/start` 不占住编辑器，运行期间可输入 `/stop`。请不要把原生 Esc 当成后台 run 的停止键。setup 的复制/下载/编译目前要等阶段完成，其他取消通过 AbortSignal、RPC abort 和 owned-PID 清理处理。模型/预算修改不改变已经开始的尝试；每个 run 使用启动时的快照。不要直接强杀工作台，否则可能留下项目游戏或锁文件。
+
+### Hacknet 原生控制台
+
+保留 pi 原生登录、模型选择、命令补全和输入编辑器，恢复 v0.1 的青绿 / 橙色配色与圆角分区。主题仅在本工作台内注册，不修改全局 pi 配置。
+
+- 宽屏：左侧 **Operator**，右侧 **Agent Activity + Live Terminal**，底部墙钟 / 工具 / token 预算条；预算条不是任务完成率。
+- **TPS** 与 LLM / 工具耗时放在 Activity 区，窄屏也保留 TPS；窗口变小时切换单栏，原生登录/模型弹窗打开时收起面板让位。
+- TPS = **已成功完成且有可用 usage 的回复的输出 token 总数 ÷ 对应生成总秒数**，是加权平均，不是瞬时峰值。包含首 token 等待与思考耗时，排除游戏工具和清理耗时；reasoning tokens 是否计入输出数遵循服务商的 usage。
+- 未收到有效 usage 时显示 `TPS —`，不按文本长度估算；停止后保留最终值。DEMO 的数值是合成预览，不参与评分。真实结果新增 `outputTokens` / `generationMs` / `tpsSamples` / `outputTps` 字段。
+- 游戏观测优先提取玩家可见的终端行，保留有界的动作/观测记录，不把整段 JSON 当作终端内容；不增加玩家工具或宿主权限。
+
+建议终端至少 **100 × 36** 以展示完整双栏；较小窗口可用紧凑布局。运行 `bun run smoke:tui` 后，可用浏览器打开 **`runtime/ui-preview/native-running-100x36.html`** 查看真实 pi 渲染输出的静态预览（本机假服务/假 runner，无真实 API 或游戏）。
 
 ### 无风险预览与命令行
 
@@ -121,18 +133,18 @@ Demo 的成功只表示预览结束，`demo: true`、`score: 0`，不进入结�
 
 默认只开放以下 9 个工具；选择 `text+image` 后增加 `hn_screenshot`：
 
-| 工具 | 范围 |
-|---|---|
-| `hn_screen` | 终端历史、已发现节点、RAM/进程、教程当前文字与按钮状态；不返回隐藏密码、Flag 或任务目标答案 |
-| `hn_cmd` | 一条经过静态白名单校验的游戏虚拟终端命令；不是宿主 shell |
-| `hn_wait` | 等待 0.1–30 秒，再观察游戏 |
-| `hn_input` | 只在程序等待输入时提交用户名/密码/答案，永不按命令 dispatch |
-| `hn_tutorial` | 只允许当前可见的教程 Continue / Hint 按钮，不能任意推进教程状态 |
-| `hn_mail` | 只列出/读取当前玩家的 inbox |
-| `hn_reply` | 通过原任务目标和 sender 验证提交邮件回复 |
-| `hn_hub` | 当前连接的任务板中可见合同的列出/接受 |
-| `hn_give_up` | 结束无法继续的尝试；不能自行宣布成功 |
-| `hn_screenshot` | **可选**，只读取游戏 framebuffer，不截图桌面；需要支持图像输入的模型 |
+| 工具            | 范围                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| `hn_screen`     | 终端历史、已发现节点、RAM/进程、教程当前文字与按钮状态；不返回隐藏密码、Flag 或任务目标答案 |
+| `hn_cmd`        | 一条经过静态白名单校验的游戏虚拟终端命令；不是宿主 shell                                    |
+| `hn_wait`       | 等待 0.1–30 秒，再观察游戏                                                                  |
+| `hn_input`      | 只在程序等待输入时提交用户名/密码/答案，永不按命令 dispatch                                 |
+| `hn_tutorial`   | 只允许当前可见的教程 Continue / Hint 按钮，不能任意推进教程状态                             |
+| `hn_mail`       | 只列出/读取当前玩家的 inbox                                                                 |
+| `hn_reply`      | 通过原任务目标和 sender 验证提交邮件回复                                                    |
+| `hn_hub`        | 当前连接的任务板中可见合同的列出/接受                                                       |
+| `hn_give_up`    | 结束无法继续的尝试；不能自行宣布成功                                                        |
+| `hn_screenshot` | **可选**，只读取游戏 framebuffer，不截图桌面；需要支持图像输入的模型                        |
 
 命令拒绝控制字符、不可见分隔符、shell 元字符、盘符/UNC、父目录穿越，以及 `mcp`、`loadmission`、`dscan` 等作弊命令。未知 exe 不自动加入白名单。因此部分原版虚拟路径用法（例如 `cd ..`）也被保守禁用；可以改用绝对虚拟路径。
 
@@ -174,17 +186,17 @@ runtime/
 ## 验证
 
 ```powershell
-bun run check                        # TypeScript + 76 个单元/回归测试，无真实 API/游戏
-bun run smoke:tui                    # 原生 pi 登录/模型/UI + 本机假服务/假 runner
+bun run check                        # TypeScript + 85 个单元/回归测试，无真实 API/游戏
+bun run smoke:tui                    # 原生 pi + ANSI 终端仿真、resize、登录/模型/TPS；生成静态预览
 bun run smoke:pi                     # 真实 pi 1.5 RPC + 本机假模型/假桥接，无真实 API/游戏
 bun run smoke:game                   # 显式启动项目内游戏 GUI，无 LLM/API/正式分数
 ```
 
 已在本机验证：
 
-- Windows Bun 1.4.4 下 TypeScript 和 76 个测试通过，包含原防线及原生控制面、密钥遮罩、endpoint 绑定、模型目录解析、HTTP 错误/重定向/超时取消等。
-- 真实原生 `InteractiveMode`：遮罩 `/login`、项目凭据写入/移除、自动获取模型、原生 `/model` 和 high thinking、后台假 `/start` / `/stop`；不启动游戏，不调用真实 API。
-- 真实 pi RPC 的加载、无工具 preflight、准确工具集握手、假模型发起 `hn_screen`、假桥接响应、token 统计；断言 `high` 实际序列化为请求中的 `reasoning_effort: high`，以及阻塞中的 preflight 可以取消并等待 owned-process 清理。
+- Windows Bun 1.4.4 下 TypeScript 和 85 个测试通过，包含原防线、原生控制面、密钥遮罩、endpoint 绑定、模型目录安全、响应式面板，以及 TPS 的加权/缺失 usage/取消/失败处理。
+- 真实原生 `InteractiveMode` + 开发测试用 `@xterm/headless`：检查实际 ANSI viewport，验证面板、遮罩 `/login`、项目凭据写入/移除、原生模型选择弹窗和 high thinking、后台假 `/start` / `/stop`、55–140 列窗口 resize 和 TPS 保留；生成 `runtime/ui-preview/` 下的 HTML/text 预览。不启动游戏，不调用真实 API。
+- 真实 pi RPC 的加载、无工具 preflight、准确工具集握手、假模型发起 `hn_screen`、假桥接响应、token 统计；从回复 usage 验证 TPS 只用输出 token。断言 `high` 实际序列化为请求中的 `reasoning_effort: high`，以及阻塞中的 preflight 可以取消并等待 owned-process 清理。
 - 原版新账号、教程 Continue 的可见状态约束、普通 connect 命令推进教程、login 提示态的两段输入、终端观测、独立 XML 保存、游戏-only 截图、按 owned PID 清理。
 - 游戏 smoke 前后检查个人 Hacknet Accounts 与 Pathfinder 目录指纹，未发生变化。
 

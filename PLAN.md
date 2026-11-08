@@ -8,7 +8,7 @@
 
 | #   | 发现                                                                                                                                                                                                                                                                                                                                                                                          | 影响                                                                                                                                                  |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | ✅ 你的 Hacknet 是**原版 Steam 安装**(`D:\Game\SteamLibrary\steamapps\common\Hacknet`),**没有** BepInEx / Pathfinder / HNPF bridge;且**调研时游戏正在运行**(PID 25572，仅历史快照)。HNPF 的默认 `HNPF_GAME=D:\Game\Hacknet+DLC+Pathfinder\Hacknet.exe` 不存在                                                                                                                                               | benchmark **必须用一份独立拷贝** `runtime/game/`,永不触碰 Steam 那份。自己按 PID 启停,**绝不** `taskkill /IM Hacknet.exe`                             |
+| 1   | ✅ 你的 Hacknet 是**原版 Steam 安装**(`D:\Game\SteamLibrary\steamapps\common\Hacknet`),**没有** BepInEx / Pathfinder / HNPF bridge;且**调研时游戏正在运行**(PID 25572，仅历史快照)。HNPF 的默认 `HNPF_GAME=D:\Game\Hacknet+DLC+Pathfinder\Hacknet.exe` 不存在                                                                                                                                 | benchmark **必须用一份独立拷贝** `runtime/game/`,永不触碰 Steam 那份。自己按 PID 启停,**绝不** `taskkill /IM Hacknet.exe`                             |
 | 2   | ✅ HNPF-MCP 的 64 个工具里有大量"作弊/越权"能力:`get_computer` 直接返回用户密码和 `firewall.solution`;`open_port` / `take_admin` / `solve_firewall` / `set_flag` / `run_action` / `write_file`;`launch_game` 会 spawn powershell,默认还带 `-enabledebug -enablefc`;`game_log_tail` 可读宿主文件;`save_game` 写宿主目录;其进程检测按**进程名** `Hacknet.exe`(会把你正在玩的那份当成"已在运行") | LLM **绝不能**直接看到 HNPF 原生 MCP 工具集。agent 侧用**自己的窄工具**,HNPF 只作为 in-game bridge(C# 插件 + 命名管道)复用                            |
 | 3   | ✅ `~/.pi/agent/settings.json` 全局加载了 `npm:pi-web-access`(模型可联网搜攻略)和 `pi-provider`;该目录还有 `auth.json`、`relays.json`。✅ bridge 的 `AllowedCommands` **只校验第一个空格前的 token**(`parts[0]`);❓ 不确定 `os.runCommand` 是否支持 `&&`/换行串联                                                                                                                             | bench 里的 pi 必须跑在**隔离的 `PI_CODING_AGENT_DIR`** + `--no-extensions`;命令白名单必须在我们自己的工具层**先做一遍**(含元字符拒绝),不能只靠 bridge |
 
@@ -260,3 +260,16 @@ ok
 - `bun run smoke:tui`：真实原生 InteractiveMode + 假终端 + 本机假模型目录；验证遮罩 `/login`、项目 auth.json 写入/移除、自动获取模型、原生 `/model` 与 high thinking、假 runner 的后台 `/start` / `/stop`。不调用真实 API，不启动游戏，不覆盖现有 bench 配置。
 - `bun run smoke:pi`：真实隔离 RPC + 本机假 SSE/bridge；现在还断言 **high 实际发为 `reasoning_effort: high`**，不是仅 UI 标签；阻塞的 preflight 可被取消，重复 `PiRpc.stop()` 共享清理 Promise，避免取消后返回时子进程尚未清理。
 - 未使用真实 CommandCode key；其 live catalog 中 `deepseek-v4.1-flash` 的准确 ID、协议兼容性和真实连接仍待验证。没有自动退回旧 v4，也没有真实 LLM 战役尝试。
+
+## 12. 后续用户反馈：恢复 v0.1 视觉与增加 TPS
+
+本节追加实施记录，不覆盖第 10/11 节的历史决策。
+
+- 继续采用单一 pi 原生 TUI；以项目内存主题恢复 v0.1 的青绿、橙色、深色面板及圆角边框。宽屏为 Operator / Agent Activity / Live Terminal 双栏，底部独立预算栏；窄屏单栏，原生弹窗打开时让位。
+- 原生编辑器仅定制边框，不替换登录、模型搜索、编辑/补全或按键逻辑。主题不写全局 pi，玩家工具集与权限不变。
+- 游戏观测提取可见终端行，有界保留最近动作/观测；清除终端控制与 bidi 注入。停止后保留结果及启动时配置，预算条明确是预算消耗而非战役完成率。
+- 用户新增 TPS 要求：显示成功完成、有可用 usage 的回复的加权平均输出 tokens/s，含首 token 等待/思考耗时，不含工具、失败/中断回复和清理。缺失 usage（含 pi 的默认全零值）显示 `—`，不按字符估算。DEMO 仍只有合成指标。
+- runner 结果补充 `outputTokens` / `generationMs` / `tpsSamples` / `outputTps`；LLM 流式计时和取消时的冻结同步到面板，不改预算判定或评分口径。
+- 新增开发依赖 `@xterm/headless` 5.5.0，在真实 InteractiveMode 的 ANSI viewport 检查分区、TPS、登录遮罩、原生模型弹窗、后台启动/停止及 55–140 列 resize；预览仅存 `runtime/ui-preview/` 的 HTML/text，全部为本机假服务/假 runner。
+- 验证：`bun run check` 的 TypeScript + **85 个测试**，`smoke:tui` 与 `smoke:pi`。RPC smoke 从两次真实 pi 回复事件读到 10 个输出 token，验证使用 output usage 而不是 input+output 的总 token。
+- 本次没有使用真实 CommandCode key，没有真实 API 推理、游戏启动或 LLM 战役尝试；完整战役和 DLC 限制不变。

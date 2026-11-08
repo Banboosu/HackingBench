@@ -1,0 +1,88 @@
+import {
+  Theme,
+  type ThemeColor,
+  type ThemeBg,
+} from "@earendil-works/pi-coding-agent";
+import { getTerminalColorMode } from "@earendil-works/pi-tui";
+
+// The v0.1 palette, registered only in this SDK runtime (never ~/.pi/agent).
+export const BENCH_PALETTE = {
+  cyan: "#50e6d3",
+  green: "#7dcf85",
+  orange: "#efb36a",
+  muted: "#8da3af",
+  dim: "#607887",
+  border: "#37525e",
+  red: "#ed7b86",
+  text: "#dce7ed",
+  panel: "#101b23",
+  inset: "#0c151d",
+  selected: "#1d3d46",
+};
+export function createBenchTheme(): Theme {
+  const c = BENCH_PALETTE;
+  const foreground: Record<ThemeColor, string> = {
+    accent: c.cyan,
+    border: c.border,
+    borderAccent: c.cyan,
+    borderMuted: c.border,
+    success: c.green,
+    error: c.red,
+    warning: c.orange,
+    muted: c.muted,
+    dim: c.dim,
+    text: c.text,
+    thinkingText: c.muted,
+    scrollbarTrack: c.border,
+    scrollbarThumb: c.muted,
+    searchMatchText: c.cyan,
+    userMessageText: c.text,
+    customMessageText: c.muted,
+    customMessageLabel: c.cyan,
+    toolTitle: c.cyan,
+    toolOutput: c.text,
+    mdHeading: c.cyan,
+    mdLink: c.cyan,
+    mdLinkUrl: c.muted,
+    mdCode: c.orange,
+    mdCodeBlock: c.green,
+    mdCodeBlockBorder: c.border,
+    mdQuote: c.muted,
+    mdQuoteBorder: c.border,
+    mdHr: c.border,
+    mdListBullet: c.cyan,
+    toolDiffAdded: c.green,
+    toolDiffRemoved: c.red,
+    toolDiffContext: c.muted,
+    syntaxComment: c.dim,
+    syntaxKeyword: c.cyan,
+    syntaxFunction: c.orange,
+    syntaxVariable: c.text,
+    syntaxString: c.green,
+    syntaxNumber: c.orange,
+    syntaxType: c.cyan,
+    syntaxOperator: c.muted,
+    syntaxPunctuation: c.muted,
+    thinkingOff: c.border,
+    thinkingMinimal: c.dim,
+    thinkingLow: c.muted,
+    thinkingMedium: c.green,
+    thinkingHigh: c.cyan,
+    thinkingXhigh: c.orange,
+    thinkingMax: c.red,
+    bashMode: c.red,
+  };
+  const background: Record<ThemeBg, string> = {
+    selectedBg: c.selected,
+    searchMatchBg: c.selected,
+    userMessageBg: c.panel,
+    customMessageBg: c.inset,
+    toolPendingBg: c.panel,
+    toolSuccessBg: c.inset,
+    toolErrorBg: "#301c27",
+  };
+  return new Theme(foreground, background, getTerminalColorMode(), {
+    name: "hackingbench",
+    appearance: "dark",
+  });
+}

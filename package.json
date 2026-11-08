@@ -5,7 +5,9 @@
   "type": "module",
   "description": "A local, tool-restricted LLM speedrun workbench for Hacknet",
   "packageManager": "bun@1.4.4",
-  "engines": { "bun": ">=1.4.4" },
+  "engines": {
+    "bun": ">=1.4.4"
+  },
   "scripts": {
     "start": "bun --no-install src/cli.tsx",
     "demo": "bun --no-install src/cli.tsx --demo",
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@xterm/headless": "5.5.0",
     "typescript": "5.9.3"
   }
 }
