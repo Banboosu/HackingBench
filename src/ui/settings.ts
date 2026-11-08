@@ -4,9 +4,6 @@ import { configSchema, type BenchConfig } from "../config.js";
 type SettingKey =
   | "knowledge"
   | "observation"
-  | "wallTimeSeconds"
-  | "maxSteps"
-  | "maxTokens"
   | "contextWindow"
   | "maxOutputTokens"
   | "gameWindowWidth"
@@ -66,24 +63,6 @@ export const BENCH_SETTINGS: readonly BenchSetting[] = [
       { value: "false", label: "false — Windowed with the configured size" },
       { value: "true", label: "true — Fullscreen" },
     ],
-  },
-  {
-    key: "wallTimeSeconds",
-    label: "Wall budget (seconds)",
-    numeric: true,
-    help: "Integer 10–86400; real time includes model thinking.",
-  },
-  {
-    key: "maxSteps",
-    label: "Tool-call budget",
-    numeric: true,
-    help: "Integer 1–10000; maximum admitted player tool calls.",
-  },
-  {
-    key: "maxTokens",
-    label: "Token budget",
-    numeric: true,
-    help: "Integer 100–100000000; reported tokens, not a billing hard cap.",
   },
   {
     key: "contextWindow",

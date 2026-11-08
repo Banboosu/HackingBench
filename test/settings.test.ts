@@ -42,7 +42,9 @@ test("config argument completion exposes only non-secret benchmark fields and fu
     "model",
     "thinking",
     "knowledge L2",
+    "maxSteps ",
     "maxTokens ",
+    "wallTimeSeconds ",
   ])
     assert.equal(configCompletions(value), null);
 });
@@ -83,9 +85,6 @@ test("benchmark field validation preserves other config, supports auto paths and
   for (const [key, value] of [
     ["knowledge", "L2"],
     ["observation", "image"],
-    ["wallTimeSeconds", "NaN"],
-    ["maxSteps", "1.5"],
-    ["maxTokens", "Infinity"],
     ["contextWindow", "16383"],
     ["maxOutputTokens", "65537"],
     ["gameWindowWidth", "639"],
@@ -104,5 +103,7 @@ test("benchmark field validation preserves other config, supports auto paths and
     () => changeSetting(limited, benchSetting("maxOutputTokens"), "65536"),
     /smaller than context window/,
   );
+  for (const removed of ["wallTimeSeconds", "maxSteps", "maxTokens"])
+    assert.throws(() => benchSetting(removed), /Unknown benchmark setting/);
   assert.throws(() => benchSetting("apiKey"), /Unknown benchmark setting/);
 });

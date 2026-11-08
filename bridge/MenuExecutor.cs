@@ -13,8 +13,8 @@ public static class MenuExecutor
     {
         var pipe = HnpfMcpBridgePlugin.Pipe;
         if (pipe == null) return;
-        int budget = 4;
-        while (budget-- > 0 && pipe.TryDequeueRequest(out var queued))
+        int remaining = 4;
+        while (remaining-- > 0 && pipe.TryDequeueRequest(out var queued))
         {
             var req = queued.Request;
             try

@@ -209,11 +209,14 @@ export async function saveModelCache(
     cacheSchema.parse({ provider: endpointIdentity(config), models }),
   );
 }
-export function manualModel(config: BenchConfig): DiscoveredModel {
+export function manualModel(
+  config: BenchConfig,
+  reasoning: boolean,
+): DiscoveredModel {
   return discoveredModelSchema.parse({
     id: config.model,
     name: `${config.model} (configured; not catalog-verified)`,
-    reasoning: config.thinking !== "off",
+    reasoning,
     contextWindow: config.contextWindow,
     maxTokens: config.maxOutputTokens,
     input: ["text"],

@@ -46,9 +46,6 @@ export const configSchema = z
     gameWindowWidth: z.number().int().min(640).max(4096).default(1920),
     gameWindowHeight: z.number().int().min(480).max(4096).default(1080),
     gameFullscreen: z.boolean().default(false),
-    wallTimeSeconds: z.number().int().min(10).max(86400).default(7200),
-    maxSteps: z.number().int().min(1).max(10000).default(1500),
-    maxTokens: z.number().int().min(100).max(100000000).default(2000000),
   })
   .refine(
     (config) => config.maxOutputTokens < config.contextWindow,

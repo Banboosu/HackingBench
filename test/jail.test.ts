@@ -159,48 +159,28 @@ function mockPi(ignoreSelection = false) {
   };
   return { pi, tools, handlers };
 }
-test("player extension hardens loadout, denies unknown tools and enforces admission deadlines", async () => {
-  const oldSteps = process.env.HACKINGBENCH_MAX_STEPS;
-  const oldDeadline = process.env.HACKINGBENCH_DEADLINE;
-  process.env.HACKINGBENCH_MAX_STEPS = "1";
-  process.env.HACKINGBENCH_DEADLINE = String(Date.now() + 10000);
-  try {
-    const mock = mockPi();
-    extension(mock.pi);
-    mock.handlers.get("session_start")!();
-    assert.deepEqual(mock.pi.getActiveTools(), PLAYER_TOOLS);
-    assert.deepEqual([...mock.tools.keys()].sort(), [...PLAYER_TOOLS].sort());
-    assert.equal(
-      mock.handlers.get("tool_call")!({ toolName: "bash" }).block,
-      true,
-    );
+test("player extension hardens loadout and denies unknown tools without an admission limit", async () => {
+  const mock = mockPi();
+  extension(mock.pi);
+  mock.handlers.get("session_start")!();
+  assert.deepEqual(mock.pi.getActiveTools(), PLAYER_TOOLS);
+  assert.deepEqual([...mock.tools.keys()].sort(), [...PLAYER_TOOLS].sort());
+  assert.equal(
+    mock.handlers.get("tool_call")!({ toolName: "bash" }).block,
+    true,
+  );
+  // Repeated admitted calls are never blocked by a counter.
+  for (let i = 0; i < 100; i++)
     assert.equal(
       mock.handlers.get("tool_call")!({ toolName: "hn_screen" }),
       undefined,
     );
-    assert.equal(
-      mock.handlers.get("tool_call")!({ toolName: "hn_screen" }).block,
-      true,
-    );
-    const givenUp = await mock.tools
-      .get("hn_give_up")
-      .execute("id", { reason: "stuck" });
-    assert.equal(givenUp.terminate, true);
-    assert.equal(givenUp.details.benchStatus, "gave_up");
-    const bad = mockPi(true);
-    extension(bad.pi);
-    assert.throws(() => bad.handlers.get("session_start")!(), /assertion/);
-    process.env.HACKINGBENCH_DEADLINE = "0";
-    const expired = mockPi();
-    extension(expired.pi);
-    assert.equal(
-      expired.handlers.get("tool_call")!({ toolName: "hn_screen" }).block,
-      true,
-    );
-  } finally {
-    if (oldSteps === undefined) delete process.env.HACKINGBENCH_MAX_STEPS;
-    else process.env.HACKINGBENCH_MAX_STEPS = oldSteps;
-    if (oldDeadline === undefined) delete process.env.HACKINGBENCH_DEADLINE;
-    else process.env.HACKINGBENCH_DEADLINE = oldDeadline;
-  }
+  const givenUp = await mock.tools
+    .get("hn_give_up")
+    .execute("id", { reason: "stuck" });
+  assert.equal(givenUp.terminate, true);
+  assert.equal(givenUp.details.benchStatus, "gave_up");
+  const bad = mockPi(true);
+  extension(bad.pi);
+  assert.throws(() => bad.handlers.get("session_start")!(), /assertion/);
 });

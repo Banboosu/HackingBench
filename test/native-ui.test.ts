@@ -14,6 +14,7 @@ import {
 } from "../src/ui/dashboard.js";
 import { createBenchTheme } from "../src/ui/theme.js";
 import { controllerExtension } from "../src/ui/controller.js";
+import { endpointIdentity } from "../src/pi/project.js";
 import { NativeSecretPrompts } from "../src/ui/secret.js";
 import { benchSetting } from "../src/ui/settings.js";
 import type { RunController } from "../src/runner.js";
@@ -62,7 +63,7 @@ test("Hacknet panels preserve native input space and TPS across terminal sizes a
     "RUN TELEMETRY",
     "LLM 13.0s",
     "TOOL 0.6s",
-    "budget consumed",
+    "RUN TELEMETRY // live totals · no hard limits",
   ])
     assert.ok(full.includes(title), title);
   const modal = dashboardLines(state, config, false, 100, {
@@ -170,11 +171,11 @@ test("game observations become bounded, sanitized terminal history instead of JS
   assert.ok(state.history.every((entry) => entry.text.length <= 1200));
   observeDashboard(state, '{"terminal": truncated');
   assert.match(state.observation, /truncated/);
-  state.result = "budget_exhausted";
+  state.result = "gave_up";
   state.phase = "FINISHED";
   assert.match(
     dashboardLines(state, defaults(), false, 100).join("\n"),
-    /BUDGET_EXHAUSTED/,
+    /GAVE_UP/,
   );
   const demo = dashboardLines(emptyDashboard(), defaults(), true, 100).join(
     "\n",
@@ -191,6 +192,7 @@ function mockPi() {
   const notices: string[] = [];
   let active = ["bash"];
   let editor = "";
+  let thinking = "high";
   const choices: string[] = [];
   const inputs: (string | undefined)[] = [];
   const dialogs: { title: string; options: string[] }[] = [];
@@ -238,7 +240,10 @@ function mockPi() {
       active = tools;
     },
     getActiveTools: () => active,
-    getThinkingLevel: () => "high",
+    getThinkingLevel: () => thinking,
+    setThinkingLevel: (level: string) => {
+      thinking = level;
+    },
   };
   return {
     pi,
@@ -287,8 +292,13 @@ test("native controller does not replace login/model; it blocks prompts, host sh
     assert.equal(mock.commands.has("login"), false);
     assert.equal(mock.commands.has("model"), false);
     assert.equal(mock.commands.has("settings"), false);
-    for (const name of ["config", "provider", "start", "stop", "test", "bench"])
+    for (const name of ["config", "provider", "start", "stop", "test"])
       assert.ok(mock.commands.has(name));
+    assert.equal(
+      mock.commands.has("bench"),
+      false,
+      "Budget-editing command must be removed.",
+    );
     assert.equal(mock.handlers.get("input")!().action, "handled");
     assert.equal(mock.handlers.get("tool_call")!().block, true);
     assert.equal(mock.handlers.get("user_bash")!().result.exitCode, 1);
@@ -308,6 +318,83 @@ test("native controller does not replace login/model; it blocks prompts, host sh
     await mock.handlers.get("session_shutdown")!();
   }
 });
+test("model attributes drive thinking and unsupported levels are clamped", async () => {
+  const mock = mockPi();
+  const base = defaults();
+  const provider = endpointIdentity(base);
+  const saved: ReturnType<typeof defaults>[] = [];
+  const model = (
+    reasoning: boolean,
+    thinkingLevelMap?: Record<string, string | null>,
+  ) =>
+    ({
+      id: "fixture-model",
+      provider,
+      reasoning,
+      thinkingLevelMap,
+      contextWindow: 128000,
+      maxTokens: 8192,
+    }) as any;
+  await controllerExtension({
+    config: base,
+    demo: true,
+    persist: async (value) => {
+      saved.push(value);
+    },
+  })(mock.pi);
+  try {
+    await mock.handlers.get("session_start")!({}, mock.ctx);
+    // Before /model, the native selector allows a provisional level; the next
+    // model selection must clamp it instead of dropping it.
+    await mock.handlers.get("thinking_level_select")!({
+      level: "high",
+      previousLevel: "off",
+    });
+    assert.equal(saved.at(-1)?.thinking, "high");
+
+    const nonThinking = model(false);
+    mock.ctx.model = nonThinking;
+    await mock.handlers.get("model_select")!({
+      model: nonThinking,
+      previousModel: undefined,
+      source: "set",
+    });
+    assert.equal(saved.at(-1)?.thinking, "off");
+    assert.equal(mock.pi.getThinkingLevel(), "off");
+
+    const fullThinking = model(true);
+    mock.ctx.model = fullThinking;
+    mock.pi.setThinkingLevel("high");
+    await mock.handlers.get("thinking_level_select")!({
+      level: "high",
+      previousLevel: "off",
+    });
+    assert.equal(saved.at(-1)?.thinking, "high");
+    assert.equal(mock.pi.getThinkingLevel(), "high");
+
+    const limited = model(true, { high: null });
+    mock.ctx.model = limited;
+    await mock.handlers.get("model_select")!({
+      model: limited,
+      previousModel: nonThinking,
+      source: "set",
+    });
+    assert.equal(saved.at(-1)?.thinking, "medium");
+    assert.equal(mock.pi.getThinkingLevel(), "medium");
+
+    mock.ctx.model = nonThinking;
+    await mock.handlers.get("thinking_level_select")!({
+      level: "high",
+      previousLevel: "medium",
+    });
+    assert.equal(saved.at(-1)?.thinking, "off");
+    assert.equal(mock.pi.getThinkingLevel(), "off");
+    assert.ok(mock.notices.some((text) => /not supported/.test(text)));
+  } finally {
+    await mock.handlers.get("session_shutdown")!();
+  }
+});
+
 test("native start returns promptly, denies duplicate starts, and stop/shutdown await owned cleanup", async () => {
   const mock = mockPi();
   let starts = 0;
@@ -362,8 +449,6 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
     assert.match(frame, /LLM thinking/);
     assert.match(frame, /TOOLS\s+3/);
     assert.match(frame, /TPS 50\.0/);
-    await mock.commands.get("bench").handler("60 10 1000", mock.ctx);
-    assert.match(mock.notices.at(-1)!, /stop before changing budgets/);
     for (const args of ["knowledge L0", "observation text+image", ""]) {
       await mock.commands.get("config").handler(args, mock.ctx);
       assert.match(
@@ -378,8 +463,8 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
     );
     assert.match(
       mock.widgets.get("bench.dashboard").render(120).join("\n"),
-      /3 \/ 1,500/,
-      "Active metrics must retain startup budgets.",
+      /TOOLS\s+3/,
+      "Active telemetry must remain visible.",
     );
     await mock.commands.get("stop").handler("", mock.ctx);
     assert.equal(stops, 2); // Operation AbortSignal and explicit owned-run cancellation are idempotent.
@@ -387,7 +472,6 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
       mock.widgets.get("bench.dashboard").render(120).join("\n"),
       /cleanup finished/,
     );
-    await mock.commands.get("bench").handler("60 10 1000", mock.ctx);
     await mock.commands.get("config").handler("knowledge L0", mock.ctx);
     await mock.commands
       .get("config")
@@ -395,7 +479,7 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
     const stopped = mock.widgets.get("bench.dashboard").render(120).join("\n");
     assert.match(stopped, /CANCELLED/);
     assert.match(stopped, /TPS 48\.0/);
-    assert.match(stopped, /3 \/ 1,500/);
+    assert.match(stopped, /TOOLS\s+3/);
     assert.match(
       stopped,
       /L1 · text/,
@@ -412,38 +496,12 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
       mock.widgets.get("bench.dashboard").render(120).join("\n"),
       /L0 · text\+image/,
     );
-    assert.match(
-      mock.widgets.get("bench.dashboard").render(120).join("\n"),
-      /3 \/ 10/,
-      "Next run must use the new budgets.",
-    );
   } finally {
     await mock.handlers.get("session_shutdown")!();
   }
   assert.equal(stops, 4);
 });
-test("native bench command validates budgets and persists only non-secret settings", async () => {
-  const mock = mockPi();
-  const saved: any[] = [];
-  await controllerExtension({
-    config: defaults(),
-    demo: true,
-    persist: async (config) => {
-      saved.push(config);
-    },
-  })(mock.pi);
-  try {
-    await mock.handlers.get("session_start")!({}, mock.ctx);
-    await mock.commands.get("bench").handler("60 10 1000", mock.ctx);
-    assert.equal(saved.at(-1)?.wallTimeSeconds, 60);
-    assert.equal("keyEnv" in saved.at(-1), false);
-    await mock.commands.get("bench").handler("-1 0 0", mock.ctx);
-    assert.equal(saved.length, 1);
-  } finally {
-    await mock.handlers.get("session_shutdown")!();
-  }
-});
-test("native config menu restores knowledge, observation, budgets and local paths with immediate non-secret persistence", async () => {
+test("native config menu restores knowledge, observation and local paths with immediate non-secret persistence", async () => {
   const mock = mockPi();
   const saved: ReturnType<typeof defaults>[] = [];
   await controllerExtension({
@@ -460,18 +518,16 @@ test("native config menu restores knowledge, observation, budgets and local path
       benchSetting("knowledge").choices![0]!.label,
       "Observation · text",
       benchSetting("observation").choices![1]!.label,
-      "Wall budget (seconds) · 7200",
       "Hacknet source folder · Auto-detect",
     );
-    mock.inputs.push("60", "D:\\Game Library\\Hacknet");
+    mock.inputs.push("D:\\Game Library\\Hacknet");
     await mock.commands.get("config").handler("", mock.ctx);
-    assert.equal(saved.length, 4);
+    assert.equal(saved.length, 3);
     assert.equal(saved[0]!.knowledge, "L0");
     assert.equal(saved[1]!.observation, "text+image");
-    assert.equal(saved[2]!.wallTimeSeconds, 60);
-    assert.equal(saved[3]!.gameSource, "D:\\Game Library\\Hacknet");
-    assert.equal("keyEnv" in saved[3]!, false);
-    assert.equal("apiKey" in saved[3]!, false);
+    assert.equal(saved[2]!.gameSource, "D:\\Game Library\\Hacknet");
+    assert.equal("keyEnv" in saved[2]!, false);
+    assert.equal("apiKey" in saved[2]!, false);
     assert.ok(
       mock.dialogs.some((dialog) => dialog.options.includes("Knowledge · L0")),
     );
@@ -566,7 +622,6 @@ test("native config supports direct values and cancellation, rejects invalid/sec
     for (const args of [
       "knowledge L2",
       "observation image",
-      "maxSteps 0",
       "gameWindowWidth 639",
       "gameWindowHeight 4097",
       "gameFullscreen yes",

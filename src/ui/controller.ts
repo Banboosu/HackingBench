@@ -19,6 +19,10 @@ import { inspect } from "../environment.js";
 import { prepareGame } from "../game/setup.js";
 import { report } from "../report.js";
 import { testProvider } from "../provider.js";
+import {
+  normalizeThinking,
+  thinkingLevelsFor,
+} from "../pi/thinking.js";
 import { redact, terminalText } from "../core/safety.js";
 import {
   appendDashboard,
@@ -143,7 +147,10 @@ export function controllerExtension(options: ControllerOptions) {
       const snapshot = { ...config };
       const id = endpointIdentity(snapshot);
       let models = await readModelCache(snapshot);
-      if (!models.length) models = [manualModel(snapshot)];
+      // No catalog entry yet: preserve the old level as a best-effort placeholder.
+      // Selecting a manual model always asks for the real reasoning capability.
+      if (!models.length)
+        models = [manualModel(snapshot, snapshot.thinking !== "off")];
       pi.registerProvider(id, {
         name: `${new URL(snapshot.baseUrl).hostname} [HackingBench]`,
         api: snapshot.api,
@@ -306,6 +313,10 @@ export function controllerExtension(options: ControllerOptions) {
         return;
       }
       const model = event.model;
+      // Native model switches may fall back to the startup default. Preserve
+      // the user's current bench choice and clamp it to the new model.
+      const level = normalizeThinking(model, config.thinking);
+      if (level !== pi.getThinkingLevel()) pi.setThinkingLevel(level);
       await commit({
         ...config,
         model: model.id,
@@ -315,13 +326,29 @@ export function controllerExtension(options: ControllerOptions) {
           model.maxTokens,
           model.contextWindow - 1,
         ),
-        thinking: model.reasoning ? pi.getThinkingLevel() : "off",
+        thinking: level,
       });
-      notify(`Next run model selected: ${model.id}. Use /start when ready.`);
+      notify(
+        `Next run model selected: ${model.id} · thinking ${level} · supported: ${thinkingLevelsFor(model).join(", ")}${model.reasoning ? "" : " (no extended thinking)"}. Use /start when ready.`,
+      );
     });
     pi.on("thinking_level_select", async (event) => {
-      if (ctx?.model?.provider === endpointIdentity(config))
+      const model = ctx?.model;
+      if (!model) {
+        // Allow choosing a level before /model; model_select clamps it later.
         await commit({ ...config, thinking: event.level });
+        return;
+      }
+      if (model.provider !== endpointIdentity(config)) return;
+      const level = normalizeThinking(model, event.level);
+      // Native pi clamps too; this also covers stale/model-catalog edge cases.
+      if (level !== event.level) pi.setThinkingLevel(level);
+      await commit({ ...config, thinking: level });
+      if (level !== event.level)
+        notify(
+          `Thinking ${event.level} is not supported by ${model.id}; using ${level}. Supported: ${thinkingLevelsFor(model).join(", ")}.`,
+          "warning",
+        );
     });
 
     const command = (
@@ -345,7 +372,7 @@ export function controllerExtension(options: ControllerOptions) {
     };
     command(
       "config",
-      "Benchmark settings: L0/L1, text/text+image, budgets and paths; /config [field [value]]",
+      "Benchmark settings: L0/L1, text/text+image, game window, context/output and paths; /config [field [value]]",
       async (args, context) => {
         const ensureEditable = () => {
           if (closed) throw new Error("Workbench is closing.");
@@ -448,8 +475,22 @@ export function controllerExtension(options: ControllerOptions) {
           );
           if (model === undefined) return;
           modelIdSchema.parse(model);
-          await commit({ ...config, model });
-          await saveModelCache(config, [manualModel(config)]);
+          const reasoningChoice = await context.ui.select(
+            `Extended thinking · ${model}`,
+            [
+              "false — no reasoning / extended thinking",
+              "true — supports reasoning / extended thinking",
+            ],
+          );
+          if (reasoningChoice === undefined) return;
+          const reasoning = reasoningChoice.startsWith("true");
+          const next = {
+            ...config,
+            model,
+            thinking: reasoning ? config.thinking : "off",
+          } as BenchConfig;
+          await commit(next);
+          await saveModelCache(next, [manualModel(next, reasoning)]);
           await registerEndpoint();
           context.ui.setEditorText("/model ");
           return;
@@ -498,6 +539,16 @@ export function controllerExtension(options: ControllerOptions) {
           throw new Error(
             "Select the configured endpoint model using native /model first.",
           );
+        if (!demo && context.model) {
+          const level = normalizeThinking(context.model, config.thinking);
+          if (level !== config.thinking) {
+            pi.setThinkingLevel(level);
+            await commit({ ...config, thinking: level });
+            notify(
+              `Thinking adjusted to ${level} for ${context.model.id} (supported: ${thinkingLevelsFor(context.model).join(", ")}).`,
+            );
+          }
+        }
         const snapshot = { ...config };
         launch(demo ? "DEMO" : "STARTING", async (signal) => {
           const key = demo ? "" : await loadKey(snapshot);
@@ -594,27 +645,6 @@ export function controllerExtension(options: ControllerOptions) {
           if (!env.pi) throw new Error("Project pi executable not found.");
           state.log = await testProvider(snapshot, key, env.pi, signal);
           notify(state.log);
-        });
-      },
-    );
-    command(
-      "bench",
-      "Show budgets or set: /bench <seconds> <tools> <tokens>",
-      async (args) => {
-        if (task) throw new Error("Use /stop before changing budgets.");
-        if (args) {
-          const parts = args.split(/\s+/).map(Number);
-          if (parts.length !== 3)
-            throw new Error("Usage: /bench <seconds> <tools> <tokens>");
-          await commit({
-            ...config,
-            wallTimeSeconds: parts[0]!,
-            maxSteps: parts[1]!,
-            maxTokens: parts[2]!,
-          });
-        }
-        pi.appendEntry("bench.notice", {
-          text: `${config.wallTimeSeconds}s / ${config.maxSteps} tools / ${config.maxTokens} tokens; ${config.knowledge}; ${config.observation}. Endpoint: ${config.baseUrl}. Native auth: runtime/controller/auth.json.`,
         });
       },
     );

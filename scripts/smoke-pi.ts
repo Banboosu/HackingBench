@@ -135,8 +135,6 @@ const jail = await createJail(
   pipe,
   "fake-pipe-token",
 );
-jail.env.HACKINGBENCH_MAX_STEPS = "10";
-jail.env.HACKINGBENCH_DEADLINE = String(Date.now() + 60000);
 let ready = false;
 let diagnostic = "";
 const throughput = new OutputThroughput();

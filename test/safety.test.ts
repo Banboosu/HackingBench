@@ -118,7 +118,7 @@ test("non-secret config is validated and unknown key fields stripped", () => {
     false,
   );
   assert.throws(() => configSchema.parse({ model: "!powershell" }));
-  assert.throws(() => configSchema.parse({ wallTimeSeconds: -1 }));
+  assert.throws(() => configSchema.parse({ gameWindowWidth: 639 }));
   assert.throws(() =>
     configSchema.parse({ baseUrl: "http://not-local.example/v1" }),
   );

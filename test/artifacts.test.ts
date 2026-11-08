@@ -121,7 +121,7 @@ const result = (
 test("report excludes demos, infra errors and cancellation from pass rate", () => {
   const text = summarizeResults([
     result("success"),
-    result("timeout"),
+    result("gave_up"),
     result("infra_error"),
     result("cancelled"),
     result("success", { demo: true }),
@@ -133,18 +133,24 @@ test("report excludes demos, infra errors and cancellation from pass rate", () =
     /No real runs/,
   );
 });
-test("report separates thinking levels, endpoints, goals and budgets", () => {
+test("legacy budget-stopped records do not count as model failures", () => {
+  const legacy = {
+    ...result("infra_error"),
+    status: "budget_exhausted",
+  } as unknown as RunResult;
+  const text = summarizeResults([result("success"), legacy]);
+  assert.match(text, /\| 1 \| 100\.0% \| 0 \|/);
+});
+
+test("report separates thinking levels, endpoints and goals", () => {
   const text = summarizeResults([
     result("success"),
     result("success", { thinking: "high" }),
     result("success", { endpoint: "https://fake.example/another-path" }),
     result("success", { goal: "other" }),
-    result("success", {
-      limits: { wallTimeSeconds: 10, maxSteps: 1, maxTokens: 100 },
-    }),
   ]);
   assert.equal(
     text.split("\n").filter((l) => l.startsWith("| https:")).length,
-    5,
+    4,
   );
 });

@@ -248,7 +248,7 @@ try {
   const settings = await capture("native-bench-settings");
   assert.match(settings, /Knowledge · L1/);
   assert.match(settings, /Observation · text/);
-  assert.match(settings, /Wall budget/);
+  assert.match(settings, /Game window width/);
   assert.match(settings, /pi.exe path/);
   terminal.resize(55, 20);
   await delay(120);

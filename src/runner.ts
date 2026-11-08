@@ -8,7 +8,7 @@ import { inspect } from "./environment.js";
 import { prepareGame } from "./game/setup.js";
 import { GameSession } from "./game/session.js";
 import { PLAYER_TOOLS, assertNoLinks, redact } from "./core/safety.js";
-import { Budget } from "./core/budget.js";
+import { RunStats } from "./core/stats.js";
 import { OutputThroughput } from "./core/throughput.js";
 import { Journal } from "./core/journal.js";
 import { PiRpc } from "./pi/rpc.js";
@@ -17,9 +17,6 @@ import { testProvider } from "./provider.js";
 
 export type RunStatus =
   | "success"
-  | "timeout"
-  | "budget_exhausted"
-  | "stalled"
   | "gave_up"
   | "cancelled"
   | "infra_error";
@@ -48,7 +45,6 @@ export interface RunResult {
   evidence?: unknown;
   demo: boolean;
   thinking: string;
-  limits?: { wallTimeSeconds: number; maxSteps: number; maxTokens: number };
   provenance?: {
     pi: string;
     runtime: string;
@@ -92,7 +88,7 @@ export class RunController extends EventEmitter {
       randomUUID().slice(0, 8);
     const folder = path.join(RUNTIME, "runs", runId);
     const startedAt = new Date().toISOString();
-    let budget: Budget | undefined;
+    let stats: RunStats | undefined;
     let timer: NodeJS.Timeout | undefined;
     let judge: NodeJS.Timeout | undefined;
     let tokenTimer: NodeJS.Timeout | undefined;
@@ -169,25 +165,18 @@ export class RunController extends EventEmitter {
         adapter: marker.adapterFingerprint,
         game: marker.gameSha256,
       };
-      budget = new Budget(config);
+      stats = new RunStats();
       const jail = await createJail(config, folder, key, game.pipe, token);
-      jail.env.HACKINGBENCH_MAX_STEPS = String(config.maxSteps);
-      jail.env.HACKINGBENCH_DEADLINE = String(
-        Date.now() + config.wallTimeSeconds * 1000,
-      );
       const rpc = new PiRpc();
       this.rpc = rpc;
       let ready = false;
-      let settledWithoutTools = 0;
-      let lastStepAtSettle = 0;
       let lastProviderError = "";
       let statsInFlight = false;
-      let limitPending = false;
       const checkCompletion = async () => {
         try {
           const value = await game!.bridge!.call("bench.judge");
           evidence = value;
-          if (value.completed && !budget!.check()) {
+          if (value.completed) {
             this.finish("success");
             return true;
           }
@@ -220,20 +209,6 @@ export class RunController extends EventEmitter {
             Array.isArray(actual) &&
             actual.length === expected.length &&
             actual.every((n: string) => expected.includes(n));
-        }
-        if (
-          e.type === "entry_appended" &&
-          e.entry?.customType === "bench.limit" &&
-          !this.stopping
-        ) {
-          const status = e.entry.data?.status;
-          if (status === "timeout" || status === "budget_exhausted") {
-            limitPending = true;
-            // Give the last admitted action's real game result priority over a denied N+1 call.
-            void checkCompletion().then((completed) => {
-              if (!completed) this.finish(status);
-            });
-          }
         }
         if (e.type === "extension_error") {
           error = e.error;
@@ -271,8 +246,7 @@ export class RunController extends EventEmitter {
         }
         if (e.type === "tool_execution_start") {
           calls.set(e.toolCallId, JSON.stringify([e.toolName, e.args]));
-          const over = budget!.beginStep();
-          if (over) this.finish(over);
+          stats!.beginStep();
           this.emit("action", `${e.toolName} ${JSON.stringify(e.args)}`);
           if (e.toolName === "hn_cmd")
             record("commands.jsonl", {
@@ -287,11 +261,7 @@ export class RunController extends EventEmitter {
               ?.filter((b: any) => b.type === "text")
               .map((b: any) => b.text)
               .join("\n") ?? "";
-          budget!.finishStep(
-            calls.get(e.toolCallId) ?? e.toolName,
-            output,
-            !!e.isError,
-          );
+          stats!.finishStep(!!e.isError);
           calls.delete(e.toolCallId);
           if (output) this.emit("observation", output);
           if (e.result?.details?.benchStatus === "gave_up")
@@ -299,31 +269,21 @@ export class RunController extends EventEmitter {
           else if (!this.stopping) void checkCompletion();
         }
         if (e.type === "agent_settled") this.emit("activity", "settled");
-        if (
-          e.type === "agent_settled" &&
-          !this.stopping &&
-          !limitPending &&
-          ready
-        ) {
+        if (e.type === "agent_settled" && !this.stopping && ready) {
           if (lastProviderError) {
             error = lastProviderError;
             this.finish("infra_error");
             return;
           }
-          settledWithoutTools =
-            budget!.steps === lastStepAtSettle ? settledWithoutTools + 1 : 0;
-          lastStepAtSettle = budget!.steps;
-          if (settledWithoutTools >= 3) this.finish("stalled");
-          else
-            void rpc
-              .request("prompt", {
-                message:
-                  "Continue playing toward the campaign ending. Use the game tools; if unable to continue, call hn_give_up.",
-              })
-              .catch((e) => {
-                error = e.message;
-                this.finish("infra_error");
-              });
+          void rpc
+            .request("prompt", {
+              message:
+                "Continue playing toward the campaign ending. Use the game tools; if unable to continue, call hn_give_up.",
+            })
+            .catch((e) => {
+              error = e.message;
+              this.finish("infra_error");
+            });
         }
       });
       signal.throwIfAborted();
@@ -348,8 +308,6 @@ export class RunController extends EventEmitter {
         if (this.stopping) resolve();
       });
       timer = setInterval(() => {
-        const reason = budget!.check();
-        if (reason) this.finish(reason);
         const liveLlmMs =
           llmMs +
           (thinkingSince === undefined
@@ -362,10 +320,10 @@ export class RunController extends EventEmitter {
         this.emit("metrics", {
           wallMs: Math.max(
             0,
-            (this.stoppedAt ?? performance.now()) - budget!.started,
+            (this.stoppedAt ?? performance.now()) - stats!.started,
           ),
-          steps: budget!.steps,
-          tokens: budget!.tokens,
+          steps: stats!.steps,
+          tokens: stats!.tokens,
           llmMs: liveLlmMs,
           toolMs,
           ...throughput.snapshot(),
@@ -385,7 +343,7 @@ export class RunController extends EventEmitter {
         void rpc
           .request("get_session_stats")
           .then((s) => {
-            budget!.tokens = s.tokens?.total ?? 0;
+            stats!.tokens = s.tokens?.total ?? 0;
           })
           .catch((e) => {
             error = e.message;
@@ -396,7 +354,7 @@ export class RunController extends EventEmitter {
           });
       };
       tokenTimer = setInterval(pollTokens, 1000);
-      const prompt = `Complete the ORIGINAL Hacknet campaign from a fresh account, including its tutorial. DLC content is installed, but this attempt's goal is the base campaign ending. Budget: ${config.wallTimeSeconds} seconds, ${config.maxSteps} tool calls, ${config.maxTokens} total reported tokens. Begin by observing the terminal. Never report victory yourself; the runner checks it. Initial screen: ${JSON.stringify(initial).slice(0, 4096)}`;
+      const prompt = `Complete the ORIGINAL Hacknet campaign from a fresh account, including its tutorial. DLC content is installed, but this attempt's goal is the base campaign ending. There is no wall-clock, tool-call or token limit; continue until the campaign ending or hn_give_up. Begin by observing the terminal. Never report victory yourself; the runner checks it. Initial screen: ${JSON.stringify(initial).slice(0, 4096)}`;
       const accepted = await rpc.request("prompt", { message: prompt });
       if (accepted?.disposition === "handled")
         throw new Error("Initial game prompt was unexpectedly intercepted.");
@@ -406,7 +364,7 @@ export class RunController extends EventEmitter {
       const finalStats = await rpc
         .request("get_session_stats", {}, 3000)
         .catch(() => undefined);
-      if (finalStats?.tokens?.total) budget.tokens = finalStats.tokens.total;
+      if (finalStats?.tokens?.total) stats.tokens = finalStats.tokens.total;
     } catch (e) {
       error = redact((e as Error).message, [key]);
       if (signal.aborted) this.finish("cancelled");
@@ -441,12 +399,12 @@ export class RunController extends EventEmitter {
       api: config.api,
       endpoint: new URL(config.baseUrl).href,
       startedAt,
-      wallMs: budget
-        ? Math.max(0, (this.stoppedAt ?? performance.now()) - budget.started)
+      wallMs: stats
+        ? Math.max(0, (this.stoppedAt ?? performance.now()) - stats.started)
         : 0,
-      steps: budget?.steps ?? 0,
-      errors: budget?.errors ?? 0,
-      tokens: budget?.tokens ?? 0,
+      steps: stats?.steps ?? 0,
+      errors: stats?.errors ?? 0,
+      tokens: stats?.tokens ?? 0,
       llmMs,
       toolMs,
       ...throughput.snapshot(),
@@ -458,11 +416,6 @@ export class RunController extends EventEmitter {
       demo: false,
       thinking: config.thinking,
       provenance,
-      limits: {
-        wallTimeSeconds: config.wallTimeSeconds,
-        maxSteps: config.maxSteps,
-        maxTokens: config.maxTokens,
-      },
     };
     await mkdir(folder, { recursive: true });
     await writeJson(path.join(folder, "result.json"), result);

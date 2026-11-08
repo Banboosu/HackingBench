@@ -201,22 +201,6 @@ function panel(
   lines.push(border("╰" + "─".repeat(width - 2) + "╯"));
   return lines.map((line) => p.bg("toolPendingBg", line));
 }
-function bar(
-  used: number,
-  limit: number,
-  width: number,
-  p: DashboardPaint,
-): string {
-  const ratio = limit > 0 ? Math.min(1, number(used) / limit) : 0;
-  const cells = Math.max(1, width);
-  const filled = Math.floor(ratio * cells);
-  return (
-    p.fg(
-      ratio >= 0.95 ? "error" : ratio >= 0.8 ? "warning" : "accent",
-      "━".repeat(filled),
-    ) + p.fg("borderMuted", "━".repeat(cells - filled))
-  );
-}
 function completedResult(state: DashboardState): string | undefined {
   return ["IDLE", "FINISHED"].includes(state.phase) ? state.result : undefined;
 }
@@ -448,44 +432,28 @@ function operator(
 }
 function telemetry(
   state: DashboardState,
-  config: BenchConfig,
   width: number,
   p: DashboardPaint,
 ): string[] {
   const inner = width - 4;
   const col = Math.floor(inner / 3);
   const values = [
-    [
-      "TIME",
-      `${clock(state.wallMs)} / ${clock(config.wallTimeSeconds * 1000)}`,
-      state.wallMs,
-      config.wallTimeSeconds * 1000,
-    ],
-    [
-      "TOOLS",
-      `${count(state.steps)} / ${count(config.maxSteps)}`,
-      state.steps,
-      config.maxSteps,
-    ],
-    [
-      "TOKENS",
-      `${shortCount(state.tokens)} / ${shortCount(config.maxTokens)}`,
-      state.tokens,
-      config.maxTokens,
-    ],
+    ["TIME", clock(state.wallMs)],
+    ["TOOLS", count(state.steps)],
+    ["TOKENS", shortCount(state.tokens)],
   ] as const;
-  const cells = values.map(([label, text, used, limit], i) => {
+  const cells = values.map(([label, text], i) => {
     const size = i === 2 ? inner - col * 2 : col;
-    return [
-      fit(p.fg("dim", label) + "  " + p.fg("text", text), size),
-      fit(bar(used, limit, Math.max(1, size - 3), p), size),
-    ];
+    return fit(p.fg("dim", label) + "  " + p.fg("text", text), size);
   });
   return panel(
-    "RUN TELEMETRY // budget consumed",
+    "RUN TELEMETRY // live totals · no hard limits",
     [
-      cells.map((cell) => cell[0]).join(""),
-      cells.map((cell) => cell[1]).join(""),
+      cells.join(""),
+      p.fg(
+        "muted",
+        `LLM ${(number(state.llmMs) / 1000).toFixed(1)}s · TOOL ${(number(state.toolMs) / 1000).toFixed(1)}s · ${tpsLabel(state)}`,
+      ),
     ],
     width,
     4,
@@ -508,14 +476,13 @@ function statusLines(
 }
 function compact(
   state: DashboardState,
-  config: BenchConfig,
   demo: boolean,
   width: number,
   height: number,
   p: DashboardPaint,
   frame: number,
 ): string[] {
-  const budget = `TIME ${clock(state.wallMs)}  TOOLS ${count(state.steps)}/${count(config.maxSteps)}  TOKENS ${shortCount(state.tokens)}/${shortCount(config.maxTokens)}`;
+  const stats = `TIME ${clock(state.wallMs)}  TOOLS ${count(state.steps)}  TOKENS ${shortCount(state.tokens)}`;
   const notice = statusLines(state, width, p);
   if (height < 11 || width < 44) {
     return [
@@ -529,7 +496,7 @@ function compact(
         width,
         0.55,
       ),
-      p.fg("text", budget),
+      p.fg("text", stats),
       ...terminalLines(
         state,
         Math.max(1, width),
@@ -556,7 +523,7 @@ function compact(
       gameHeight,
       p,
     ),
-    p.fg("text", clip(budget, width)),
+    p.fg("text", clip(stats, width)),
     ...notice,
     p.fg(
       "warning",
@@ -585,7 +552,7 @@ export function dashboardLines(
   const inner = width - margin * 2;
   let lines: string[];
   if (inner < 88 || height < 21)
-    lines = compact(state, config, demo, inner, height, p, frame);
+    lines = compact(state, demo, inner, height, p, frame);
   else {
     const notice = statusLines(state, inner, p);
     const bodyHeight = height - 7 - notice.length;
@@ -632,7 +599,7 @@ export function dashboardLines(
       ...header(state, demo, inner, p),
       "",
       ...left.map((line, i) => line + " " + right[i]),
-      ...telemetry(state, config, inner, p),
+      ...telemetry(state, inner, p),
       ...notice,
     ];
   }
@@ -644,7 +611,7 @@ export function dashboardLines(
 export function deckFooter(width: number, p: DashboardPaint = plain): string[] {
   const commands =
     width >= 92
-      ? "/start  /stop   /config  /provider  /login  /model  /thinking   /bench  /test   /quit"
+      ? "/start  /stop   /config  /provider  /login  /model  /thinking   /test   /quit"
       : width >= 55
         ? "/start  /stop  /config  /login  /model  /quit"
         : "/start  /stop  /config  /quit";

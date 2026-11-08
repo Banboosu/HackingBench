@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
 import { JsonLines } from "../src/core/jsonl.js";
-import { Budget } from "../src/core/budget.js";
+import { RunStats } from "../src/core/stats.js";
 import { boundedText } from "../src/game/player.js";
 import { defaults } from "../src/config.js";
 import { RunController } from "../src/runner.js";
@@ -37,53 +36,19 @@ test("JSONL malformed and oversized frames fail closed", () => {
   assert.throws(() => new JsonLines(() => {}, 5).push("123456"));
   assert.throws(() => new JsonLines(() => {}, 5).push("123456\n"));
 });
-test("tool budget permits exactly N admissions and blocks N+1", () => {
-  const budget = new Budget({
-    wallTimeSeconds: 10,
-    maxSteps: 2,
-    maxTokens: 100,
-  });
-  assert.equal(budget.beginStep(), undefined);
-  assert.equal(budget.check(), undefined);
-  assert.equal(budget.beginStep(), undefined);
-  assert.equal(budget.check(), undefined);
-  assert.equal(budget.beginStep(), "budget_exhausted");
-  assert.equal(budget.steps, 2);
-});
-test("wall-clock budget is monotonic", async () => {
-  const budget = new Budget({
-    wallTimeSeconds: 0.01,
-    maxSteps: 10,
-    maxTokens: 100,
-  });
-  await delay(20);
-  assert.equal(budget.check(), "timeout");
-});
-test("stalls and consecutive failure budget are detected", () => {
-  const budget = new Budget({
-    wallTimeSeconds: 10,
-    maxSteps: 100,
-    maxTokens: 100,
-  });
-  for (let i = 0; i < 6; i++) budget.finishStep("same", "same", false);
-  assert.equal(budget.check(), "stalled");
-  const failures = new Budget({
-    wallTimeSeconds: 10,
-    maxSteps: 100,
-    maxTokens: 100,
-  });
-  for (let i = 0; i < 15; i++) failures.finishStep("cmd" + i, "error", true);
-  assert.equal(failures.check(), "budget_exhausted");
-  assert.equal(failures.errors, 15);
+test("run telemetry counts tools, failures and tokens without enforcing limits", () => {
+  const stats = new RunStats();
+  for (let i = 0; i < 100; i++) stats.beginStep();
+  stats.finishStep(false);
+  stats.finishStep(true);
+  stats.tokens = 10_000_000;
+  assert.equal(stats.steps, 100);
+  assert.equal(stats.errors, 1);
+  assert.equal(stats.tokens, 10_000_000);
+  assert.ok(stats.elapsedMs >= 0);
+  assert.equal("check" in stats, false, "Statistics must not expose a stop decision.");
 });
 test("tokens and observations are bounded", () => {
-  const budget = new Budget({
-    wallTimeSeconds: 10,
-    maxSteps: 100,
-    maxTokens: 100,
-  });
-  budget.tokens = 100;
-  assert.equal(budget.check(), "budget_exhausted");
   const output = boundedText("你".repeat(3000));
   assert.ok(Buffer.byteLength(output) <= 4096);
   assert.match(output, /truncated/);

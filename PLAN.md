@@ -77,17 +77,16 @@
 
 ---
 
-## 4. 计时器与预算(多层)
+## 4. 计时器与统计(无预算硬限制)
 
-| 层                | 默认值(可配)                                                                                                                | 触发后                                              |
+运行不设置墙钟、工具调用数或报告 token 上限；这些值只写入 dashboard/result/report。单次 LLM 请求和单次 bridge 调用仍有通信超时，属于错误处理而不是 benchmark 预算。
+
+| 层                | 当前行为                                                                                                                    | 触发后                                              |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| 单次 LLM 请求超时 | `retry.provider.timeoutMs` = 120s(写进隔离 settings.json);`retry.maxRetries`=3                                              | 重试仍失败 → `infra_error`(**不扣模型分**,自动补跑) |
+| 单次 LLM 请求超时 | `retry.provider.timeoutMs` = 120s(写进隔离 settings.json);`retry.maxRetries`=2                                              | 重试仍失败 → `infra_error`(**不扣模型分**)          |
 | 单次工具调用      | `hn_cmd` 等输出稳定:最长 `settleMs`≈4s;bridge 调用超时 8s                                                                   | 返回 `[timeout]` 观测,不中止 run                    |
-| **单任务墙钟**    | 按 tier:T0 3min / T1 8min / T2 15min / T3 20min                                                                             | RPC `abort` → 判分 → `timeout`                      |
-| 步数              | 工具调用 ≤150;连续失败命令 ≤15                                                                                              | `budget_exhausted`                                  |
-| 卡死检测          | 同一命令 + 同一观测 重复 ≥6 次                                                                                              | `stalled`                                           |
-| Token 预算        | 输入+输出 ≤ 每任务上限(每个 turn_end 轮询 `get_session_stats`)。**用 token 而非美元**:pi-provider 对未知中转模型默认 cost=0 | `budget_exhausted`                                  |
-| 整个套件          | 总墙钟 / 总 token;`results.jsonl` 追加写,按 `(model,task,rep)` 断点续跑                                                     | 优雅停止                                            |
+| 墙钟 / 工具 / token | 仅统计，不参与准入或停止                                                                                                    | 无                                                  |
+| 卡死检测          | 已移除；agent settled 时继续提示推进                                                                                        | 只有用户 `/stop` 或基础设施错误                      |
 | 时钟记录          | 每步记:墙钟、LLM 思考耗时、工具耗时、(可得时)游戏内时间                                                                     | 写入结果                                            |
 
 **时间模型(决策点 2)**:Hacknet 是**实时**游戏(追踪计时器按真实时间走),LLM 思考时游戏照走 → 慢模型被惩罚且结果不可复现。
@@ -105,7 +104,7 @@
 | `hn_screen()`         | 当前连接节点/目录、RAM、进程(ps)、**已发现**的网络地图(无密码/Flag/防火墙答案)       |
 | `hn_mail(action,id?)` | 邮件列表/正文(游戏 UI 本来就能看)                                                    |
 | `hn_input(text)`      | ❓ 终端处于提示态(如 `login`)时的输入;依赖 spike 确认 `os.runCommand` 在提示态的行为 |
-| `hn_wait(seconds)`    | 让游戏时间流逝(上限 30s),计入预算                                                    |
+| `hn_wait(seconds)`    | 让游戏时间流逝(上限 30s),只记录耗时                                                  |
 | `hn_give_up(reason)`  | 允许模型显式放弃(区分 gave_up 与 timeout)                                            |
 
 系统提示词按**知识档位**做成可对比维度:L0 = 只给目标,靠游戏内 `help` 自学;L1 = 附 `HN命令速查.md` 精简版(含"scp 方向相反/exe 是列表"等坑)。默认 L1。
@@ -124,9 +123,9 @@
 | T3 防御 | 防火墙 `analyze`→`solve`、代理过载(shell)、RAM 管理、追踪计时 |
 | T4 长程 | 多任务链(后期:原版战役片段,需要 `LoadMission`)                |
 
-**任务描述** `tasks/<id>.yaml`:`setup`(扩展名/存档快照/初始 run_action/Flag)、`prompt`、`success`(特权谓词:Flag / 任务完成 / 某节点 admin / 文件存在或含某内容 / 答案串)、`failure`(被追踪 game-over 等)、`budgets`、`knowledgeLevel`。
+**任务描述** `tasks/<id>.yaml`:`setup`(扩展名/存档快照/初始 run_action/Flag)、`prompt`、`success`(特权谓词:Flag / 任务完成 / 某节点 admin / 文件存在或含某内容 / 答案串)、`failure`(被追踪 game-over 等)、`knowledgeLevel`。当前实现不读取 `budgets`，旧字段会被配置 schema 丢弃。
 
-**指标**:`status ∈ {success, game_over, timeout, budget_exhausted, stalled, gave_up, infra_error}`;`score`(0–1,按任务目标加权部分得分,来自 `mission_detail`);步数、墙钟、游戏时间、tokens(in/out/cache)、非法/被拒命令率、工具调用格式错误率。多次重复(默认 3)报 pass@1 ± CI;`infra_error` 不计入模型成绩。**记录** `provider id + baseUrl 主机 + modelId + thinking level`(同名模型在不同中转站质量可能不同)。
+**指标**:`status ∈ {success, game_over, gave_up, cancelled, infra_error}`;`score`(0–1,按任务目标加权部分得分,来自 `mission_detail`);步数、墙钟、游戏时间、tokens(in/out/cache)、非法/被拒命令率、工具调用格式错误率。多次重复(默认 3)报 pass@1 ± CI;`infra_error` 不计入模型成绩。**记录** `provider id + baseUrl 主机 + modelId + thinking level`(同名模型在不同中转站质量可能不同);thinking 由模型 `reasoning` / `thinkingLevelMap` 决定并在运行前收敛。
 
 **公平性控制**:同一提示词/工具描述/seed;`(模型×任务×重复)` 顺序随机化,稀释中转站负载波动;观测统一截断;pi 自动 compaction 保持默认并记录事件。
 
@@ -140,7 +139,7 @@ HackingBench/
 ├─ package.json / tsconfig.json
 ├─ bench/                    # orchestrator CLI:doctor | setup | models | run | report | clean
 │  └─ src/{cli,config}.ts  game/{manager,launcher,bridgeClient}.ts
-│        pi/{rpcRunner,jail}.ts  tasks/{loader,predicates}.ts  timers/{budget,watchdog}.ts  report/
+│        pi/{rpcRunner,jail}.ts  tasks/{loader,predicates}.ts  core/stats.ts  report/
 ├─ extension/hacknet-player.ts   # pi 扩展:窄工具 + 守卫 + 断言 + 单步计时
 ├─ vendor/hnpf-mcp/              # git submodule,钉死 commit(bridge/ + bridge.js)
 ├─ content/HackBench/            # Pathfinder 扩展(任务内容)
@@ -159,7 +158,7 @@ HackingBench/
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | **M0 Spike**(先做) | 复制游戏 → 装 BepInEx+Pathfinder → `dotnet build` bridge 并部署 → 管道连通;验证 ❓ 项:`&&`/换行、login 提示态、`-enabledebug` 是否必需、get_network_map 可见性字段、追踪/game-over 事件、读档进场景耗时、DLC 是否存在、文档目录写入范围;**跑安全对抗测试** | 每个 ❓ 有结论;安全 spike 无逃逸               |
 | M1 笼子与工具      | `hacknet-player.ts` + 白名单 + 工具集断言 + fake-bridge 单测                                                                                                                                                                                               | 无游戏下单测全绿;断言能拦住额外工具            |
-| M2 单任务闭环      | GameManager + RpcRunner + Watchdog + 日志;1 模型 × T0                                                                                                                                                                                                      | 超时/卡死/预算各触发一次且清理干净(无残留进程) |
+| M2 单任务闭环      | GameManager + RpcRunner + Watchdog + 日志;1 模型 × T0                                                                                                                                                                                                      | 通信超时/基础设施错误各触发一次且清理干净(无残留进程) |
 | M3 任务集 v0       | HackBench 扩展 + 8~12 题 + 谓词判分                                                                                                                                                                                                                        | 人工通关每题;空 agent 得 0 分                  |
 | M4 矩阵与报告      | 读 models.json、preflight、重复、续跑、leaderboard                                                                                                                                                                                                         | 一键跑 N 模型 × 全套件                         |
 | M5 可选            | 时间冻结补丁、Tier B 沙箱、并行多实例(管道名已按 run 区分)、截图/视觉模态、原版战役切片                                                                                                                                                                    | —                                              |
@@ -218,7 +217,7 @@ ok
 - 已从 Steam 原件**复制并冷安装**项目副本；离线 patch 处理 game/Pathfinder/BepInEx 的 Documents 调用、禁用 Steam 初始化，并保留 Pathfinder 所需 IL 结构。安装契约 version 2、offline patch version 2；启动和重编译前验证四个敏感二进制，不能通过普通 adapter rebuild 掩盖已改变的隔离程序集。
 - 游戏 smoke：原版菜单新账号 → 正常启动教程 → 只能点击可见 Continue/Hint → 普通 connect 推进教程；login 用户名/密码提示态可正常输入，输入不会 dispatch 为命令；独立 XML 存档、游戏 framebuffer 截图、owned-PID 清理均通过。个人 Hacknet Accounts / Pathfinder 目录前后指纹未变化。
 - 模型只见 9 个 `hn_*` 工具，image 模式增加 1 个截图工具；命令与提示态输入分别处理，没有通用 shell、宿主文件或原生 MCP 工具。
-- 墙钟、步数、token、连续错误/重复卡死限制，扩展 admission + 外层 watchdog；result 保存 thinking、预算、版本指纹；报告排除 demo，并把 infra/cancel 排除于通过率之外。
+- 墙钟、步数、token 仅记录统计，不参与 admission 或停止；result 保存 thinking、统计、版本指纹；报告排除 demo，并把 infra/cancel 排除于通过率之外。
 - `bun run check`：TypeScript + **63 个单元/回归测试**；`bun run smoke:pi` 用真实 pi + 本地假模型/假桥接验证工具握手、调用往返和 token 统计，**不使用真实 API/key**。
 
 ### Bun 迁移（按后续用户指示）
@@ -245,8 +244,8 @@ ok
 ### 已实现
 
 - 默认入口改为 pi 1.5.0 SDK 的 `InteractiveMode`，原生全屏编辑器、命令补全、`/login` / `/logout`、`/model` 和 `/thinking`；移除独立 Ink/React 配置页及其依赖。
-- 上方扩展 dashboard 显示真实 activity、墙钟、工具/token 预算、最近动作/assistant/游戏终端；没有伪造 mission 完成百分比。正常启动异步检测本机环境，不自动开始游玩。
-- 自有 `/provider`、`/start`、`/stop`、`/test`、`/bench`、`/doctor`、`/setup`、`/report`。`/start` 后台运行，编辑器保持可用；禁止重复 run，停止/退出等待 owned-process 清理。setup 阶段尚不能即时取消。
+- 上方扩展 dashboard 显示真实 activity、墙钟、工具/token 统计、最近动作/assistant/游戏终端；没有伪造 mission 完成百分比。正常启动异步检测本机环境，不自动开始游玩。
+- 自有 `/provider`、`/start`、`/stop`、`/test`、`/doctor`、`/setup`、`/report`。`/start` 后台运行，编辑器保持可用；禁止重复 run，停止/退出等待 owned-process 清理。setup 阶段尚不能即时取消。墙钟/工具/token 只统计，不再有 `/bench` 预算设置。
 - **登录流程和凭据存储直接复用 pi**，项目 agent directory 固定 `runtime/controller/`；凭据位于 `runtime/controller/auth.json`，不接触全局 `~/.pi/agent`。删除用户可见的 keyEnv / session-only 工作流。headless 与交互 run 从同一原生认证文件取 key，RPC 玩家内部仍用仅进程环境传递，不额外落盘。
 - 实测发现 pi 1.5.0 原生 `LoginDialog` 未处理 secret 遮罩；仅为 secret prompt 加原生 TUI Input 掩码适配，不重做认证/OAuth/存储。拒绝命令型/变量引用型 key。文件明文暂存，Windows 权限继承项目目录，不宣称加密。
 - provider ID 绑定完整 endpoint + API 协议，改地址不误发旧 key。CommandCode / OpenAI / Anthropic 预设及自定义兼容端点；原生登录后自动模型发现，原生 `/model` 搜索选择，支持目录重试和手动 ID。
@@ -265,11 +264,11 @@ ok
 
 本节追加实施记录，不覆盖第 10/11 节的历史决策。
 
-- 继续采用单一 pi 原生 TUI；以项目内存主题恢复 v0.1 的青绿、橙色、深色面板及圆角边框。宽屏为 Operator / Agent Activity / Live Terminal 双栏，底部独立预算栏；窄屏单栏，原生弹窗打开时让位。
+- 继续采用单一 pi 原生 TUI；以项目内存主题恢复 v0.1 的青绿、橙色、深色面板及圆角边框。宽屏为 Operator / Agent Activity / Live Terminal 双栏，底部独立统计栏；窄屏单栏，原生弹窗打开时让位。
 - 原生编辑器仅定制边框，不替换登录、模型搜索、编辑/补全或按键逻辑。主题不写全局 pi，玩家工具集与权限不变。
-- 游戏观测提取可见终端行，有界保留最近动作/观测；清除终端控制与 bidi 注入。停止后保留结果及启动时配置，预算条明确是预算消耗而非战役完成率。
+- 游戏观测提取可见终端行，有界保留最近动作/观测；清除终端控制与 bidi 注入。停止后保留结果及启动时配置，统计条明确是运行统计而非战役完成率。
 - 用户新增 TPS 要求：显示成功完成、有可用 usage 的回复的加权平均输出 tokens/s，含首 token 等待/思考耗时，不含工具、失败/中断回复和清理。缺失 usage（含 pi 的默认全零值）显示 `—`，不按字符估算。DEMO 仍只有合成指标。
-- runner 结果补充 `outputTokens` / `generationMs` / `tpsSamples` / `outputTps`；LLM 流式计时和取消时的冻结同步到面板，不改预算判定或评分口径。
+- runner 结果补充 `outputTokens` / `generationMs` / `tpsSamples` / `outputTps`；LLM 流式计时和取消时的冻结同步到面板，不改统计/评分口径。
 - 新增开发依赖 `@xterm/headless` 5.5.0，在真实 InteractiveMode 的 ANSI viewport 检查分区、TPS、登录遮罩、原生模型弹窗、后台启动/停止及 55–140 列 resize；预览仅存 `runtime/ui-preview/` 的 HTML/text，全部为本机假服务/假 runner。
 - 验证：`bun run check` 的 TypeScript + **85 个测试**，`smoke:tui` 与 `smoke:pi`。RPC smoke 从两次真实 pi 回复事件读到 10 个输出 token，验证使用 output usage 而不是 input+output 的总 token。
 - 本次没有使用真实 CommandCode key，没有真实 API 推理、游戏启动或 LLM 战役尝试；完整战役和 DLC 限制不变。
@@ -285,8 +284,8 @@ ok
 
 ## 14. 恢复迁移时遗漏的工作台设置入口
 
-- 用户反馈 L0/L1、text/image 等选项不见了。确认配置 schema、prompt 与截图工具开关仍存在，但迁移原生 pi 时只保留 `/bench` 预算入口，其他工作台选项被留在 JSON 中，属于交互功能回退。
-- 新增 `/config`，通过 pi 原生 select/input 菜单恢复知识、文字/文字+图像观测、三项预算、上下文/输出限制、游戏来源和 pi.exe 路径；支持 `/config knowledge L0`、`/config observation text+image` 等直接修改与参数补全。接受后立即保存非敏感配置，Esc 取消当前项/退出菜单。
+- 用户反馈 L0/L1、text/image 等选项不见了。确认配置 schema、prompt 与截图工具开关仍存在，但迁移原生 pi 时只保留旧的预算入口，其他工作台选项被留在 JSON 中，属于交互功能回退。
+- 新增 `/config`，通过 pi 原生 select/input 菜单恢复知识、文字/文字+图像观测、游戏窗口、上下文/输出限制、游戏来源和 pi.exe 路径；支持 `/config knowledge L0`、`/config observation text+image` 等直接修改与参数补全。接受后立即保存非敏感配置，Esc 取消当前项/退出菜单。预算字段和 `/bench` 已移除，运行不因计数停止。
 - 菜单、反馈明确 next run；任务活跃时拒绝修改，弹窗返回后再次检查。已完成面板保留旧配置快照，下一 run 使用新配置。不覆盖原生 `/settings`、`/login`、`/model`、`/thinking`，不恢复旧 keyEnv/会话密钥 UI 或第二套 renderer。
 - text+image 明示需要视觉模型，只增加既有游戏 framebuffer 工具；L0/L1 只控制额外命令速查。新增测试验证四种组合的实际 jail prompt、图像输入声明、环境开关与准确工具名单，而非只检查界面文字。
-- TypeScript + **93 个测试**、原生 TUI smoke 与 Pi RPC smoke 通过；TUI 验证设置菜单、原生枚举选择、原生参数补全及 55×20 设置菜单。没有真实 API/key、游戏启动或真实战役，smoke 不改用户 bench 配置。
+- TypeScript + **102 个测试**、原生 TUI smoke 与 Pi RPC smoke 通过；TUI 验证设置菜单、原生枚举选择、原生参数补全及 55×20 设置菜单。没有真实 API/key、游戏启动或真实战役，smoke 不改用户 bench 配置。

@@ -13,16 +13,9 @@ export default function hacknetPlayer(pi: ExtensionAPI) {
   let bridge: Bridge | undefined;
   let player: Player | undefined;
   let queue: Promise<unknown> = Promise.resolve();
-  let steps = 0;
-  const maxSteps = Number(process.env.HACKINGBENCH_MAX_STEPS ?? "1500");
-  const deadline = Number(process.env.HACKINGBENCH_DEADLINE ?? "0");
   const use = async <T>(f: (p: Player) => Promise<T>): Promise<T> => {
     // Serialize even if a provider issues several calls in one assistant message.
     const result = queue.then(async () => {
-      if (!Number.isFinite(deadline) || deadline <= Date.now()) {
-        pi.appendEntry("bench.limit", { status: "timeout" });
-        throw new Error("Player wall-clock deadline exceeded.");
-      }
       if (!player) {
         const pipe = process.env.HACKINGBENCH_PIPE;
         const token = process.env.HACKINGBENCH_PIPE_TOKEN;
@@ -70,23 +63,6 @@ export default function hacknetPlayer(pi: ExtensionAPI) {
         reason: "Only benchmark player tools are permitted.",
         terminate: true,
       };
-    if (!Number.isFinite(deadline) || deadline <= Date.now()) {
-      pi.appendEntry("bench.limit", { status: "timeout" });
-      return {
-        block: true,
-        reason: "Player wall-clock deadline exceeded.",
-        terminate: true,
-      };
-    }
-    if (!Number.isSafeInteger(maxSteps) || maxSteps < 1 || steps >= maxSteps) {
-      pi.appendEntry("bench.limit", { status: "budget_exhausted" });
-      return {
-        block: true,
-        reason: "Player tool budget exhausted.",
-        terminate: true,
-      };
-    }
-    steps++;
   });
   pi.on("user_bash", () => ({
     result: {
@@ -136,7 +112,7 @@ export default function hacknetPlayer(pi: ExtensionAPI) {
     label: "Wait",
     executionMode: "sequential",
     description:
-      "Wait 0.1–30 real seconds for programs or story events; then observe the game. Counts against the wall-clock budget.",
+      "Wait 0.1–30 real seconds for programs or story events; then observe the game.",
     parameters: Type.Object({
       seconds: Type.Number({ minimum: 0.1, maximum: 30 }),
     }),

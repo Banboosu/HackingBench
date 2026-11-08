@@ -8,8 +8,12 @@ import type { RunResult } from "./runner.js";
 
 export function summarizeResults(results: RunResult[]): string {
   const groups = new Map<string, RunResult[]>();
-  for (const r of results.filter((r) => !r.demo)) {
-    // Do not compare different thinking levels, goals, adapters, or resource limits.
+  // Legacy results stopped by removed budgets must not count as model failures.
+  const legacyBudgetStops = new Set(["timeout", "budget_exhausted", "stalled"]);
+  for (const r of results.filter(
+    (r) => !r.demo && !legacyBudgetStops.has(String(r.status)),
+  )) {
+    // Do not compare different thinking levels, goals, adapters or provenance.
     const key = JSON.stringify([
       r.endpoint,
       r.api,
@@ -19,7 +23,6 @@ export function summarizeResults(results: RunResult[]): string {
       r.observation,
       r.goal,
       r.provenance,
-      r.limits,
     ]);
     groups.set(key, [...(groups.get(key) ?? []), r]);
   }
@@ -28,16 +31,13 @@ export function summarizeResults(results: RunResult[]): string {
   const lines = [
     "# HackingBench results",
     "",
-    "Early adapter results, not a validated leaderboard. Infra errors and cancellations are excluded from pass rate. Different goals, thinking levels, adapter provenance and budgets are grouped separately.",
+    "Early adapter results, not a validated leaderboard. Infra errors, cancellations and legacy budget-stopped records are excluded from pass rate. Different goals, thinking levels, observations and adapter provenance are grouped separately. Wall time, tool calls and tokens are recorded as statistics, not enforced quotas.",
     "",
-    "| Endpoint / API / model / thinking / knowledge / observation / goal / adapter / limits (s,calls,tokens) | Attempts | Pass rate | Infra errors | Best success (s) |",
+    "| Endpoint / API / model / thinking / knowledge / observation / goal / adapter | Attempts | Pass rate | Infra errors | Best success (s) |",
     "|---|---:|---:|---:|---:|",
   ];
   for (const runs of groups.values()) {
     const r = runs[0]!;
-    const limits = r.limits
-      ? `${r.limits.wallTimeSeconds},${r.limits.maxSteps},${r.limits.maxTokens}`
-      : "unknown";
     const name = [
       r.endpoint,
       r.api,
@@ -47,7 +47,6 @@ export function summarizeResults(results: RunResult[]): string {
       r.observation,
       r.goal,
       r.provenance?.adapter.slice(0, 12) ?? "unknown",
-      limits,
     ]
       .join(" / ")
       .replace(/[|\r\n]/g, " ");
