@@ -9,6 +9,9 @@ type SettingKey =
   | "maxTokens"
   | "contextWindow"
   | "maxOutputTokens"
+  | "gameWindowWidth"
+  | "gameWindowHeight"
+  | "gameFullscreen"
   | "gameSource"
   | "piExecutable";
 export interface BenchSetting {
@@ -16,6 +19,7 @@ export interface BenchSetting {
   label: string;
   help: string;
   numeric?: boolean;
+  boolean?: boolean;
   choices?: { value: string; label: string }[];
 }
 /** Only non-secret benchmark settings. Auth/model/provider remain native pi commands. */
@@ -39,6 +43,28 @@ export const BENCH_SETTINGS: readonly BenchSetting[] = [
         value: "text+image",
         label: "text+image — Text + game framebuffer; vision model required",
       },
+    ],
+  },
+  {
+    key: "gameWindowWidth",
+    label: "Game window width",
+    numeric: true,
+    help: "Integer 640–4096 pixels. Applied to the project game copy before launch; Steam's files are untouched.",
+  },
+  {
+    key: "gameWindowHeight",
+    label: "Game window height",
+    numeric: true,
+    help: "Integer 480–4096 pixels. Applied to the project game copy before launch; Steam's files are untouched.",
+  },
+  {
+    key: "gameFullscreen",
+    label: "Game fullscreen",
+    boolean: true,
+    help: "Windowed uses the configured size; fullscreen fills the display. Applied before launch.",
+    choices: [
+      { value: "false", label: "false — Windowed with the configured size" },
+      { value: "true", label: "true — Fullscreen" },
     ],
   },
   {
@@ -99,11 +125,17 @@ export function changeSetting(
   text: string,
 ): BenchConfig {
   const raw = text.trim();
-  const value = field.numeric
-    ? Number(raw)
-    : (field.choices?.find(
+  let value: unknown;
+  if (field.boolean) {
+    if (!/^(?:true|false)$/i.test(raw))
+      throw new Error(`Invalid ${field.label}. ${field.help}`);
+    value = raw.toLowerCase() === "true";
+  } else if (field.numeric) value = Number(raw);
+  else
+    value =
+      field.choices?.find(
         (choice) => choice.value.toLowerCase() === raw.toLowerCase(),
-      )?.value ?? raw);
+      )?.value ?? raw;
   const parsed = configSchema.safeParse({ ...config, [field.key]: value });
   // Do not echo arbitrary input or full config in validation errors.
   if (!parsed.success) throw new Error(`Invalid ${field.label}. ${field.help}`);

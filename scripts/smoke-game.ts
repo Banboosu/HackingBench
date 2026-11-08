@@ -10,12 +10,13 @@ import {
 import path from "node:path";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
-import { loadConfig, RUNTIME } from "../src/config.js";
+import { gameWindow, loadConfig, ROOT, RUNTIME } from "../src/config.js";
 import { GameSession } from "../src/game/session.js";
 import { Player } from "../src/game/player.js";
 import { prepareGame } from "../src/game/setup.js";
 import { exists } from "../src/environment.js";
-import { validateCommand } from "../src/core/safety.js";
+import { childEnvironment, validateCommand } from "../src/core/safety.js";
+import { command } from "../src/core/process.js";
 import { setTimeout as delay } from "node:timers/promises";
 
 // Explicit, opt-in GUI smoke test. Uses no LLM key and never counts as a benchmark run.
@@ -35,6 +36,7 @@ async function fingerprint(folder: string): Promise<string> {
   return hash.digest("hex");
 }
 const config = await loadConfig();
+const display = gameWindow(config);
 await prepareGame(config, console.log);
 const folder = path.join(RUNTIME, "smoke", randomUUID());
 await mkdir(folder, { recursive: true });
@@ -67,11 +69,37 @@ try {
   console.log(
     "Launching ONLY the project game copy for an API-free smoke test…",
   );
-  const initial = (await game.start(folder, controller.signal)) as Record<
-    string,
-    unknown
-  >;
+  const initial = (await game.start(
+    folder,
+    display,
+    controller.signal,
+  )) as Record<string, unknown>;
   console.log("OWNED PID:", game.pid);
+  const window = JSON.parse(
+    await command(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        path.join(ROOT, "scripts", "inspect-window.ps1"),
+        "-OwnedProcessId",
+        String(game.pid),
+      ],
+      { cwd: ROOT, env: childEnvironment(), timeout: 15000 },
+    ),
+  );
+  assert.equal(window.visible, true, "Owned game window must be visible.");
+  assert.equal(window.minimized, false, "Owned game must not start minimized.");
+  if (!display.fullscreen) {
+    // The bridge declares per-monitor-v2 DPI awareness before Game1 creates
+    // the window, so Settings.txt pixels must equal physical client pixels.
+    assert.equal(window.width, display.width);
+    assert.equal(window.height, display.height);
+  }
+  console.log("OWNED WINDOW:", JSON.stringify(window));
   console.log("INITIAL PLAYER VIEW:", JSON.stringify(initial));
   const player = new Player(game.bridge!);
   assert.throws(() => validateCommand("ls && powershell.exe"));
@@ -168,11 +196,11 @@ try {
   );
   console.log("Save-root and non-completion assertions passed.");
   const capture = await player.capture();
-  await writeFile(
-    path.join(folder, "frame.png"),
-    Buffer.from(capture.data, "base64"),
+  const png = Buffer.from(capture.data, "base64");
+  await writeFile(path.join(folder, "frame.png"), png);
+  console.log(
+    `${png.readUInt32BE(16)}×${png.readUInt32BE(20)} game-only framebuffer captured (configured ${display.width}×${display.height} ${display.fullscreen ? "fullscreen" : "windowed"}).`,
   );
-  console.log("Game-only framebuffer captured.");
   await game.bridge!.call("game.save");
   const saveDeadline = Date.now() + 10000;
   while (
@@ -206,5 +234,5 @@ try {
   );
 }
 console.log(
-  "PASS: vanilla startup/tutorial controls, interactive login, tools, isolated XML save, game-only screenshot, owned-PID cleanup. Personal save folders unchanged.",
+  `PASS: visible non-minimized ${display.width}x${display.height} ${display.fullscreen ? "fullscreen" : "windowed"} owned game, vanilla startup/tutorial controls, interactive login, tools, isolated XML save, game-only screenshot, owned-PID cleanup. Personal save folders unchanged.`,
 );

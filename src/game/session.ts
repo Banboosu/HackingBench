@@ -9,6 +9,7 @@ import { COMMANDS, assertNoLinks, childEnvironment } from "../core/safety.js";
 import { terminate } from "../core/process.js";
 import { Bridge } from "./bridge.js";
 import { verifyBinaries } from "./integrity.js";
+import { ensureGameWindow, type GameWindow } from "./display.js";
 import { MIN_BUN_VERSION, supportedBun } from "../core/runtime.js";
 
 export class GameSession extends EventEmitter {
@@ -22,7 +23,11 @@ export class GameSession extends EventEmitter {
   get pid(): number | undefined {
     return this.child?.pid;
   }
-  async start(runDir: string, signal?: AbortSignal): Promise<unknown> {
+  async start(
+    runDir: string,
+    window: GameWindow,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     if (process.platform !== "win32" || !supportedBun())
       throw new Error(
         `Live game sessions require Windows-native Bun >=${MIN_BUN_VERSION}.`,
@@ -41,6 +46,7 @@ export class GameSession extends EventEmitter {
     )
       throw new Error("Game isolation marker is invalid or outdated.");
     await verifyBinaries(root, marker.binaryFingerprints);
+    await ensureGameWindow(root, window);
     const exe = path.join(root, "Hacknet.exe");
     const saves = path.join(runDir, "accounts") + path.sep;
     await mkdir(saves, { recursive: true });
@@ -59,7 +65,8 @@ export class GameSession extends EventEmitter {
         HACKINGBENCH_DOCUMENTS: documents,
       }),
       shell: false,
-      windowsHide: true,
+      // This is the visible game GUI, not a background RPC/utility process.
+      windowsHide: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
     this.child.on("error", (e) => this.fault(e));

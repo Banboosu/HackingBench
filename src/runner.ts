@@ -3,7 +3,7 @@ import { appendFile, mkdir, open, rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { RUNTIME, writeJson, type BenchConfig } from "./config.js";
+import { RUNTIME, gameWindow, writeJson, type BenchConfig } from "./config.js";
 import { inspect } from "./environment.js";
 import { prepareGame } from "./game/setup.js";
 import { GameSession } from "./game/session.js";
@@ -155,7 +155,7 @@ export class RunController extends EventEmitter {
       safeLog(
         "Starting project game copy; personal Steam instance is not used or stopped.",
       );
-      const initial = await game.start(folder, signal);
+      const initial = await game.start(folder, gameWindow(config), signal);
       const marker = JSON.parse(
         await readFile(
           path.join(RUNTIME, "game", ".hackingbench-install.json"),

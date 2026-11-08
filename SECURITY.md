@@ -20,7 +20,7 @@ HackingBench 的默认边界是**模型工具限制、项目内游戏副本、�
 - 交互提示态输入独立处理：只记录等待中的输入，不调用 `OS.execute`，也不会因为后台线程切换状态而把输入变成命令。
 - 教程按钮限制到游戏当前真实可见的 Continue/Hint 条件，不提供任意 advanceState、LoadMission 或 Flag 写入。
 - 玩家观测不投影隐藏密码、Flag、未发现节点或 mission goals。特权 judge 与玩家工具分开。
-- 截图只读取游戏 framebuffer，不访问桌面捕获 API。
+- 截图只读取游戏 framebuffer，不访问桌面捕获 API。DPI 感知由项目 bridge 在创建游戏窗口前于进程内声明；不写 HKCU 兼容性项、不改 Steam 原件或 exe 清单。
 - 工作台由 Windows 原生 Bun 执行，`bunfig.toml` 禁用自动 .env 加载；安装使用冻结的 `bun.lock` 并跳过 lifecycle scripts，不做运行时自动装包。
 - 控制面复用 pi 原生 `/login` / `/logout`，凭据只暂存到项目 `runtime/controller/auth.json`（Git 忽略）。这是明文文件；Windows 权限继承项目目录，不提供加密或强制用户专属 DACL。API key 不写入 `bench.json`、prompt、CLI 参数或普通 run 文件。
 - endpoint ID 绑定完整 URL 与协议，更换 endpoint 后不会复用旧 key。玩家 RPC 子进程仍只通过内部环境变量获得本次 key，生成的 provider 文件只含变量引用；不要求用户配置变量名，不复制认证文件进 run 目录。

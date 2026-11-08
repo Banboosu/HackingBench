@@ -23,6 +23,14 @@ test("config argument completion exposes only non-secret benchmark fields and fu
     ["knowledge L0", "knowledge L1"],
   );
   assert.deepEqual(
+    configCompletions("gameWindow")!.map((item) => item.value),
+    ["gameWindowWidth", "gameWindowHeight"],
+  );
+  assert.deepEqual(
+    configCompletions("gameFullscreen t")!.map((item) => item.value),
+    ["gameFullscreen true"],
+  );
+  assert.deepEqual(
     configCompletions("observation text+")!.map((item) => item.value),
     ["observation text+image"],
   );
@@ -58,6 +66,20 @@ test("benchmark field validation preserves other config, supports auto paths and
     ).gameSource,
     "D:\\Game Library\\Hacknet",
   );
+  assert.equal(config.gameWindowWidth, 1920);
+  assert.equal(config.gameWindowHeight, 1080);
+  assert.equal(config.gameFullscreen, false);
+  const sized = changeSetting(config, benchSetting("gameWindowWidth"), "1280");
+  assert.equal(sized.gameWindowWidth, 1280);
+  assert.equal(sized.gameWindowHeight, 1080);
+  assert.equal(
+    changeSetting(
+      changeSetting(sized, benchSetting("gameWindowHeight"), "720"),
+      benchSetting("gameFullscreen"),
+      "TRUE",
+    ).gameFullscreen,
+    true,
+  );
   for (const [key, value] of [
     ["knowledge", "L2"],
     ["observation", "image"],
@@ -66,6 +88,11 @@ test("benchmark field validation preserves other config, supports auto paths and
     ["maxTokens", "Infinity"],
     ["contextWindow", "16383"],
     ["maxOutputTokens", "65537"],
+    ["gameWindowWidth", "639"],
+    ["gameWindowWidth", "1280.5"],
+    ["gameWindowHeight", "479"],
+    ["gameWindowHeight", "4097"],
+    ["gameFullscreen", "yes"],
   ]) {
     assert.throws(
       () => changeSetting(config, benchSetting(key!), value!),

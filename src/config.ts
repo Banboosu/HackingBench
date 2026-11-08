@@ -42,6 +42,10 @@ export const configSchema = z
     maxOutputTokens: z.number().int().min(256).max(65536).default(8192),
     knowledge: z.enum(["L0", "L1"]).default("L1"),
     observation: z.enum(["text", "text+image"]).default("text"),
+    // Applied only to the prepared project copy before launch; never Steam's Settings.txt.
+    gameWindowWidth: z.number().int().min(640).max(4096).default(1920),
+    gameWindowHeight: z.number().int().min(480).max(4096).default(1080),
+    gameFullscreen: z.boolean().default(false),
     wallTimeSeconds: z.number().int().min(10).max(86400).default(7200),
     maxSteps: z.number().int().min(1).max(10000).default(1500),
     maxTokens: z.number().int().min(100).max(100000000).default(2000000),
@@ -52,6 +56,17 @@ export const configSchema = z
   );
 export type BenchConfig = z.infer<typeof configSchema>;
 export const defaults = (): BenchConfig => configSchema.parse({});
+export function gameWindow(config: BenchConfig): {
+  width: number;
+  height: number;
+  fullscreen: boolean;
+} {
+  return {
+    width: config.gameWindowWidth,
+    height: config.gameWindowHeight,
+    fullscreen: config.gameFullscreen,
+  };
+}
 export async function loadConfig(): Promise<BenchConfig> {
   try {
     return configSchema.parse(JSON.parse(await readFile(CONFIG_FILE, "utf8")));

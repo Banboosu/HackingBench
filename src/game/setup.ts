@@ -12,11 +12,18 @@ import {
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { unzipSync } from "fflate";
-import { ROOT, RUNTIME, writeJson, type BenchConfig } from "../config.js";
+import {
+  ROOT,
+  RUNTIME,
+  gameWindow,
+  writeJson,
+  type BenchConfig,
+} from "../config.js";
 import { exists, inspect } from "../environment.js";
 import { assertNoLinks, childEnvironment, within } from "../core/safety.js";
 import { command } from "../core/process.js";
 import { binaryFingerprints, verifyBinaries } from "./integrity.js";
+import { ensureGameWindow } from "./display.js";
 
 const ASSETS = {
   pathfinder: {
@@ -228,7 +235,10 @@ export async function prepareGame(
           marker.binaryFingerprints = await binaryFingerprints(game);
           await writeJson(file, marker);
         }
-        log("Existing project game copy is ready.");
+        await ensureGameWindow(game, gameWindow(config));
+        log(
+          "Existing project game copy is ready with the configured game window.",
+        );
         return;
       }
       throw new Error(
@@ -291,6 +301,7 @@ export async function prepareGame(
       ],
       { cwd: ROOT, env: childEnvironment() },
     );
+    await ensureGameWindow(stage, gameWindow(config));
     await buildBridge(stage, log);
     const dll = path.join(stage, "BepInEx", "plugins", "HnpfMcpBridge.dll");
     await writeJson(path.join(stage, ".hackingbench-install.json"), {

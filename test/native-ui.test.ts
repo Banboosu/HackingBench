@@ -497,6 +497,53 @@ test("native config menu restores knowledge, observation, budgets and local path
   }
 });
 
+test("native config menu exposes game window size and fullscreen with immediate persistence", async () => {
+  const mock = mockPi();
+  const saved: ReturnType<typeof defaults>[] = [];
+  await controllerExtension({
+    config: defaults(),
+    demo: true,
+    persist: async (value) => {
+      saved.push(value);
+    },
+  })(mock.pi);
+  try {
+    await mock.handlers.get("session_start")!({}, mock.ctx);
+    mock.choices.push(
+      "Game window width · 1920",
+      "Game window height · 1080",
+      "Game fullscreen · false",
+      benchSetting("gameFullscreen").choices![1]!.label,
+    );
+    mock.inputs.push("1280", "720");
+    await mock.commands.get("config").handler("", mock.ctx);
+    assert.deepEqual(
+      saved.map((value) => [
+        value.gameWindowWidth,
+        value.gameWindowHeight,
+        value.gameFullscreen,
+      ]),
+      [
+        [1280, 1080, false],
+        [1280, 720, false],
+        [1280, 720, true],
+      ],
+    );
+    assert.ok(
+      mock.dialogs.some((dialog) =>
+        dialog.options.includes("Game window width · 1920"),
+      ),
+    );
+    assert.equal(mock.notices.length, 0);
+    assert.match(
+      mock.widgets.get("bench.dashboard").render(120).join("\n"),
+      /Game fullscreen = true/,
+    );
+  } finally {
+    await mock.handlers.get("session_shutdown")!();
+  }
+});
+
 test("native config supports direct values and cancellation, rejects invalid/secret/provider fields without saving", async () => {
   const mock = mockPi();
   const saved: ReturnType<typeof defaults>[] = [];
@@ -520,6 +567,9 @@ test("native config supports direct values and cancellation, rejects invalid/sec
       "knowledge L2",
       "observation image",
       "maxSteps 0",
+      "gameWindowWidth 639",
+      "gameWindowHeight 4097",
+      "gameFullscreen yes",
       "contextWindow 65536",
       "maxOutputTokens 65536",
       "apiKey do-not-store",

@@ -17,6 +17,7 @@ import {
 export function mountDeckLayout(
   tui: TUI,
   renderDeck: (width: number, height: number) => string[],
+  renderFeedback?: (document: Component, width: number) => string[],
 ): Component {
   if (!isViewportTUI(tui))
     return {
@@ -40,7 +41,12 @@ export function mountDeckLayout(
   const controls = [pending!, status!, editor!, widgetsBelow!, footer!];
   // Native login/model/errors remain readable, but old notifications must not
   // become a large empty transcript above the deck. Longer output is scrollable.
-  const feedback = new ScrollView(document!, {
+  const feedbackDocument: Component = {
+    render: (width) =>
+      renderFeedback?.(document!, width) ?? document!.render(width),
+    invalidate: () => document!.invalidate(),
+  };
+  const feedback = new ScrollView(feedbackDocument, {
     follow: "end",
     primary: true,
     scrollbar: "auto",
@@ -54,7 +60,7 @@ export function mountDeckLayout(
       );
       const feedbackRows = Math.min(
         maxFeedbackRows,
-        document!.render(width).length,
+        feedbackDocument.render(width).length,
       );
       return renderDeck(
         width,

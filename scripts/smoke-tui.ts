@@ -142,6 +142,11 @@ async function capture(name: string): Promise<string> {
     "Deck must start at the top, not below empty transcript space.",
   );
   const frame = lines.join("\n");
+  assert.doesNotMatch(
+    frame.replace(/\s+/g, ""),
+    /Error:(?:SavedAPIkeyfor|Loggedinto).*nodefaultmodelisconfigured/,
+    "Successful native login must not leave a red default-model advisory.",
+  );
   assert.ok(
     !frame.includes(key),
     "Native viewport exposed fixture credential.",
@@ -326,6 +331,11 @@ try {
     "Native login leaked the fixture key in terminal output.",
   );
   assert.ok(runtime.session.modelRuntime.getModel(id, config.model)?.reasoning);
+  await until(
+    () => frameIncludes("Credentials saved. Use /model"),
+    "Native login should show normal model-selection guidance, not Error.",
+  );
+  await capture("native-login-model-hint");
   await runtime.session.prompt("Do not run a model from the control deck.");
   assert.ok(
     !runtime.session.messages.some((message) => message.role === "user"),
@@ -353,6 +363,15 @@ try {
   await until(
     () => runtime.session.model?.provider === id,
     "Native /model did not select endpoint model.",
+  );
+  await until(
+    async () => !(await frameIncludes("Credentials saved. Use /model")),
+    "Resolved model-selection guidance must disappear.",
+  );
+  const selected = await capture("native-model-selected");
+  assert.doesNotMatch(
+    selected.replace(/\s+/g, ""),
+    /nodefaultmodelisconfigured/,
   );
   mode.clearEditor();
   terminal.type("/thinking high");
@@ -404,10 +423,21 @@ try {
   );
   assert.match(await capture("native-stopped"), /TPS 13\.8/);
   assert.ok(terminal.output.includes("RUNNING"));
+  mode.clearEditor();
+  terminal.type("/thinking definitely-invalid");
+  terminal.input?.("\r");
+  await until(
+    () => frameIncludes("Unknown thinking level"),
+    "Real native errors must remain visible.",
+  );
+  assert.match(
+    await capture("native-real-error"),
+    /Error: Unknown thinking level/,
+  );
   // /start is backed exclusively by FakeRunner here. Never invoke real runner or /test.
   assert.equal(runtime.session.sessionFile, undefined);
   console.log(
-    "PASS: real native pi viewport + top-anchored deck + one environment summary + native /config L0/L1/text/image + masked /login + native model picker/high thinking + background fake /start/stop + resize 55–200 columns / up to 70 rows. HTML/text previews: runtime/ui-preview/. No real API/game.",
+    "PASS: real native pi viewport + top-anchored deck + one environment summary + native /config L0/L1/text/image + masked /login + resolving non-error model guidance + native model picker/high thinking + preserved real errors + background fake /start/stop + resize 55–200 columns / up to 70 rows. HTML/text previews: runtime/ui-preview/. No real API/game.",
   );
 } catch (error) {
   await capture("native-smoke-failed").catch(() => undefined);

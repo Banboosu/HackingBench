@@ -29,6 +29,7 @@ import {
 } from "./dashboard.js";
 import { BenchEditor } from "./editor.js";
 import { mountDeckLayout } from "./layout.js";
+import { nativeFeedback } from "./feedback.js";
 import {
   BENCH_SETTINGS,
   benchSetting,
@@ -200,25 +201,37 @@ export function controllerExtension(options: ControllerOptions) {
       );
       context.ui.setWidget("bench.dashboard", (tui, theme) => {
         repaint = () => tui.requestRender();
-        const deck = mountDeckLayout(tui, (width, height) => {
-          const displayedConfig =
-            activeConfig ??
-            (state.result ? lastRunConfig : undefined) ??
-            config;
-          const auth = context.modelRegistry?.getProviderAuthStatus(
-            endpointIdentity(displayedConfig),
-          );
-          if (auth)
-            state.credential =
-              auth.configured && auth.source === "stored"
-                ? "stored"
-                : "unknown";
-          return dashboardLines(state, displayedConfig, demo, width, {
-            height,
-            theme,
-            frame: Math.floor(performance.now() / 240),
-          });
-        });
+        const deck = mountDeckLayout(
+          tui,
+          (width, height) => {
+            const displayedConfig =
+              activeConfig ??
+              (state.result ? lastRunConfig : undefined) ??
+              config;
+            const auth = context.modelRegistry?.getProviderAuthStatus(
+              endpointIdentity(displayedConfig),
+            );
+            if (auth)
+              state.credential =
+                auth.configured && auth.source === "stored"
+                  ? "stored"
+                  : "unknown";
+            return dashboardLines(state, displayedConfig, demo, width, {
+              height,
+              theme,
+              frame: Math.floor(performance.now() / 240),
+            });
+          },
+          (document, width) =>
+            nativeFeedback(
+              document,
+              width,
+              theme,
+              (provider) =>
+                provider === endpointIdentity(config) &&
+                context.model?.provider !== provider,
+            ),
+        );
         return {
           ...deck,
           dispose() {
@@ -304,6 +317,7 @@ export function controllerExtension(options: ControllerOptions) {
         ),
         thinking: model.reasoning ? pi.getThinkingLevel() : "off",
       });
+      notify(`Next run model selected: ${model.id}. Use /start when ready.`);
     });
     pi.on("thinking_level_select", async (event) => {
       if (ctx?.model?.provider === endpointIdentity(config))
