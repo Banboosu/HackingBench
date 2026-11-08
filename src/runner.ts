@@ -15,11 +15,7 @@ import { PiRpc } from "./pi/rpc.js";
 import { createJail } from "./pi/jail.js";
 import { testProvider } from "./provider.js";
 
-export type RunStatus =
-  | "success"
-  | "gave_up"
-  | "cancelled"
-  | "infra_error";
+export type RunStatus = "success" | "gave_up" | "cancelled" | "infra_error";
 export interface RunResult {
   runId: string;
   status: RunStatus;

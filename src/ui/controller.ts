@@ -19,10 +19,7 @@ import { inspect } from "../environment.js";
 import { prepareGame } from "../game/setup.js";
 import { report } from "../report.js";
 import { testProvider } from "../provider.js";
-import {
-  normalizeThinking,
-  thinkingLevelsFor,
-} from "../pi/thinking.js";
+import { normalizeThinking, thinkingLevelsFor } from "../pi/thinking.js";
 import { redact, terminalText } from "../core/safety.js";
 import {
   appendDashboard,

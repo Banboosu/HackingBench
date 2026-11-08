@@ -3,10 +3,7 @@ import assert from "node:assert/strict";
 import type { Model } from "@earendil-works/pi-ai";
 import { defaults } from "../src/config.js";
 import { manualModel } from "../src/pi/discovery.js";
-import {
-  normalizeThinking,
-  thinkingLevelsFor,
-} from "../src/pi/thinking.js";
+import { normalizeThinking, thinkingLevelsFor } from "../src/pi/thinking.js";
 
 function model(
   reasoning: boolean,
@@ -58,7 +55,10 @@ test("manual model reasoning is explicit instead of inferred from the current th
 test("effective thinking is clamped to model capabilities instead of the previous selection", () => {
   assert.equal(normalizeThinking(model(false), "max"), "off");
   assert.equal(normalizeThinking(model(true), "xhigh"), "high");
-  assert.equal(normalizeThinking(model(true, { high: null }), "high"), "medium");
+  assert.equal(
+    normalizeThinking(model(true, { high: null }), "high"),
+    "medium",
+  );
   assert.equal(
     normalizeThinking(model(true, { xhigh: "xhigh" }), "max"),
     "xhigh",

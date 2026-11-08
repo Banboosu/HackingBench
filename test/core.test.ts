@@ -46,7 +46,11 @@ test("run telemetry counts tools, failures and tokens without enforcing limits",
   assert.equal(stats.errors, 1);
   assert.equal(stats.tokens, 10_000_000);
   assert.ok(stats.elapsedMs >= 0);
-  assert.equal("check" in stats, false, "Statistics must not expose a stop decision.");
+  assert.equal(
+    "check" in stats,
+    false,
+    "Statistics must not expose a stop decision.",
+  );
 });
 test("tokens and observations are bounded", () => {
   const output = boundedText("你".repeat(3000));
