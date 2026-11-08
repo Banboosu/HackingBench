@@ -1,0 +1,13 @@
+# Secrets come from the caller's environment or the masked, session-only TUI field.
+# Do not silently import a project .env into the benchmark process.
+env = false
+
+[run]
+shell = "bun"
+bun = true
+
+[install.cache]
+dir = "./runtime/bun-cache"
+
+[test]
+root = "./test"

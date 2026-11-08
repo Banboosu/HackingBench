@@ -1,17 +1,18 @@
-# HackingBench — LLM 游玩 Hacknet 的 Benchmark 规划(待 review)
+# HackingBench — LLM 游玩 Hacknet 的 Benchmark 规划与实施记录
 
-> 状态:**仅规划,尚未写任何代码、未启动游戏、未改动你的 pi/Steam 配置。**
-> 标记:✅ = 已读源码/文档/本机确认;❓ = 假设,需在 M0 spike 里验证。
+> 状态:**已按你的“开始 coding / 继续”授权进入实现；v0.1 工作台和基础 smoke test 已完成，完整 benchmark 尚未验证。未修改全局 pi/Steam 原件，已启动并清理项目内独立游戏副本。**
+> 下文保留原设计与用户决策，含尚未实现的路线；当前可用范围与限制以 `README.md` 和第 10 节为准。
+> 标记:✅ = 已读源码/文档/本机确认;❓ = 假设,仍需验证。
 
 ## 0. 先看三个对设计影响最大的现场发现
 
-| #   | 发现                                                                                                                                                                                                                                                                                                                                                                                         | 影响                                                                                                                                                  |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | ✅ 你的 Hacknet 是**原版 Steam 安装**(`D:\Game\SteamLibrary\steamapps\common\Hacknet`),**没有** BepInEx / Pathfinder / HNPF bridge;且**此刻游戏正在运行**(PID 25572)。HNPF 的默认 `HNPF_GAME=D:\Game\Hacknet+DLC+Pathfinder\Hacknet.exe` 不存在                                                                                                                                               | benchmark **必须用一份独立拷贝** `runtime/game/`,永不触碰 Steam 那份。自己按 PID 启停,**绝不** `taskkill /IM Hacknet.exe`                             |
+| #   | 发现                                                                                                                                                                                                                                                                                                                                                                                          | 影响                                                                                                                                                  |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | ✅ 你的 Hacknet 是**原版 Steam 安装**(`D:\Game\SteamLibrary\steamapps\common\Hacknet`),**没有** BepInEx / Pathfinder / HNPF bridge;且**调研时游戏正在运行**(PID 25572，仅历史快照)。HNPF 的默认 `HNPF_GAME=D:\Game\Hacknet+DLC+Pathfinder\Hacknet.exe` 不存在                                                                                                                                               | benchmark **必须用一份独立拷贝** `runtime/game/`,永不触碰 Steam 那份。自己按 PID 启停,**绝不** `taskkill /IM Hacknet.exe`                             |
 | 2   | ✅ HNPF-MCP 的 64 个工具里有大量"作弊/越权"能力:`get_computer` 直接返回用户密码和 `firewall.solution`;`open_port` / `take_admin` / `solve_firewall` / `set_flag` / `run_action` / `write_file`;`launch_game` 会 spawn powershell,默认还带 `-enabledebug -enablefc`;`game_log_tail` 可读宿主文件;`save_game` 写宿主目录;其进程检测按**进程名** `Hacknet.exe`(会把你正在玩的那份当成"已在运行") | LLM **绝不能**直接看到 HNPF 原生 MCP 工具集。agent 侧用**自己的窄工具**,HNPF 只作为 in-game bridge(C# 插件 + 命名管道)复用                            |
-| 3   | ✅ `~/.pi/agent/settings.json` 全局加载了 `npm:pi-web-access`(模型可联网搜攻略)和 `pi-provider`;该目录还有 `auth.json`、`relays.json`。✅ bridge 的 `AllowedCommands` **只校验第一个空格前的 token**(`parts[0]`);❓ 不确定 `os.runCommand` 是否支持 `&&`/换行串联                                                                                                                               | bench 里的 pi 必须跑在**隔离的 `PI_CODING_AGENT_DIR`** + `--no-extensions`;命令白名单必须在我们自己的工具层**先做一遍**(含元字符拒绝),不能只靠 bridge |
+| 3   | ✅ `~/.pi/agent/settings.json` 全局加载了 `npm:pi-web-access`(模型可联网搜攻略)和 `pi-provider`;该目录还有 `auth.json`、`relays.json`。✅ bridge 的 `AllowedCommands` **只校验第一个空格前的 token**(`parts[0]`);❓ 不确定 `os.runCommand` 是否支持 `&&`/换行串联                                                                                                                             | bench 里的 pi 必须跑在**隔离的 `PI_CODING_AGENT_DIR`** + `--no-extensions`;命令白名单必须在我们自己的工具层**先做一遍**(含元字符拒绝),不能只靠 bridge |
 
-另外:✅ 你的 bash 是 WSL,但 Hacknet / 命名管道 `\\.\pipe\…` 是 Windows 的 → **orchestrator 必须用 Windows 原生 Node**(已有 v26.13)跑,不能在 WSL 里跑。
+另外:✅ 你是在 **Windows Terminal → PowerShell 7 → Windows 原生 pi 1.5** 中运行;只有当前 `bash` 工具子进程经 `C:\Windows\System32\bash.exe` 进入 WSL Ubuntu。已通过 Windows 进程父子链确认,并非 pi 本身运行在 WSL。原因是未配置 `shellPath`,Git Bash 安装在 Scoop 自定义目录,不在 pi 优先探测的两个默认安装目录中,于是回退到 PATH 上的旧版 WSL `bash.exe` 启动器。**benchmark 不依赖 WSL**,按后续指示改为使用 Windows 原生 Bun 直接连接 Hacknet 的命名管道 `\\.\pipe\…`,启动时检查 Bun 版本及 `process.platform === "win32"`;不根据开发工具的 Bash 环境推断应用运行环境。
 
 ---
 
@@ -28,7 +29,7 @@
 ## 2. 总体架构
 
 ```
-┌─ bench CLI(TS, Windows Node, 特权) ───────────────────────────────┐
+┌─ bench CLI(TS, Windows Bun, 特权) ───────────────────────────────┐
 │ ModelMatrix  读 models.json → 选模型 → preflight(1 次 chat ping)    │
 │ GameManager  复制干净游戏 → 写 bridge cfg(随机 Token/白名单/管道名)  │
 │              → 按 PID 启动 → 等 bridge → 读档进场景 → 结束按 PID 杀   │
@@ -62,7 +63,7 @@
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | L0 模型无任何代码执行路径 | pi 子进程参数:`--tools "hn_*"`(显式白名单,**无** read/write/edit/bash/powershell)、`--no-mcp`、`--no-extensions -e extension/hacknet-player.ts`、`--no-skills --no-prompt-templates --no-themes --no-context-files`、`--no-approve`(不加载项目 `.pi`)、cwd=空的 run 目录。env:`PI_CODING_AGENT_DIR=runtime/pi-agent`(隔离,**不含**你的 auth.json / pi-web-access / relays.json)、`PI_TELEMETRY=0`、`PI_SKIP_VERSION_CHECK=1` |
 | L0.5 工具集断言           | 扩展在 `session_start` / `before_agent_start` 调 `pi.setActiveTools(allowlist)`;`tool_call` 钩子对白名单外工具一律 `block`;启动后若发现活跃工具 ⊄ 白名单 → 该 run 记 `infra_error` 并中止                                                                                                                                                                                                                                    |
-| L1 命令校验(自己的工具层) | `hn_cmd`:**首 token 白名单**(原版玩家命令 + 本机 /bin 里的 exe 名,最终清单在 M0 从游戏 `help`/`exe` 输出导出)、**拒绝** `& \| ; \` $ ( ) < > \n \r`、长度 ≤200、拒绝盘符/UNC 路径、**明确禁止** `mcp / loadmission / loadactions / dscan / debug* / sudo / execute / fastHack / revealAll`;速率限制                                                                                                                          |
+| L1 命令校验(自己的工具层) | `hn_cmd`:**首 token 白名单**(原版玩家命令 + 本机 /bin 里的 exe 名,最终清单在 M0 从游戏 `help`/`exe` 输出导出)、**拒绝** `& \| ; \` $ ( ) < > \n \r`、长度 ≤200、拒绝盘符/UNC 路径、**明确禁止** `mcp / loadmission / loadactions / dscan / debug\* / sudo / execute / fastHack / revealAll`;速率限制                                                                                                                         |
 | L2 bridge 自带 Safety     | 写入游戏拷贝的 cfg:`AllowedCommands=<同一份清单>`、`AutoToken` 每 run 由 bench 生成随机 Token、管道名 `hnpf-bench-<runId>`(不与你正在玩的实例冲突)。注:`ReadOnly=true` 会连 `execute_command` 一起拦,所以不能用                                                                                                                                                                                                              |
 | L3 游戏拷贝               | 独立目录 `runtime/game/`;启动**不带** `-enabledebug -enablefc`;存档/Documents 写入范围在 M0 确认(Pathfinder 存 `Documents\My Games\HacknetPathfinder\`,与你原版存档的 `My Games\Hacknet` 分开);每 run 前从模板目录恢复                                                                                                                                                                                                       |
 | L4 进程卫生               | 只按自己 spawn 的 PID 终止,Windows 下 `taskkill /PID <pid> /T /F`;启动前检查 `runtime/` 外是否有同名管道;**永不**按进程名杀                                                                                                                                                                                                                                                                                                  |
@@ -98,14 +99,14 @@
 
 ## 5. agent 工具设计(公平性:只给玩家屏幕上看得到的)
 
-| 工具                  | 说明                                                                                |
-| --------------------- | ----------------------------------------------------------------------------------- |
-| `hn_cmd(cmd)`         | 执行一条白名单终端命令,等待输出稳定,返回**新增终端行**(截断 ≤4KB)                   |
-| `hn_screen()`         | 当前连接节点/目录、RAM、进程(ps)、**已发现**的网络地图(无密码/Flag/防火墙答案)      |
-| `hn_mail(action,id?)` | 邮件列表/正文(游戏 UI 本来就能看)                                                   |
+| 工具                  | 说明                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `hn_cmd(cmd)`         | 执行一条白名单终端命令,等待输出稳定,返回**新增终端行**(截断 ≤4KB)                    |
+| `hn_screen()`         | 当前连接节点/目录、RAM、进程(ps)、**已发现**的网络地图(无密码/Flag/防火墙答案)       |
+| `hn_mail(action,id?)` | 邮件列表/正文(游戏 UI 本来就能看)                                                    |
 | `hn_input(text)`      | ❓ 终端处于提示态(如 `login`)时的输入;依赖 spike 确认 `os.runCommand` 在提示态的行为 |
-| `hn_wait(seconds)`    | 让游戏时间流逝(上限 30s),计入预算                                                   |
-| `hn_give_up(reason)`  | 允许模型显式放弃(区分 gave_up 与 timeout)                                           |
+| `hn_wait(seconds)`    | 让游戏时间流逝(上限 30s),计入预算                                                    |
+| `hn_give_up(reason)`  | 允许模型显式放弃(区分 gave_up 与 timeout)                                            |
 
 系统提示词按**知识档位**做成可对比维度:L0 = 只给目标,靠游戏内 `help` 自学;L1 = 附 `HN命令速查.md` 精简版(含"scp 方向相反/exe 是列表"等坑)。默认 L1。
 
@@ -154,14 +155,14 @@ HackingBench/
 
 ## 8. 里程碑
 
-| M                  | 内容                                                                                                                                                                                                                                                      | 退出条件                                       |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| **M0 Spike**(先做) | 复制游戏 → 装 BepInEx+Pathfinder → `dotnet build` bridge 并部署 → 管道连通;验证 ❓ 项:`&&`/换行、login 提示态、`-enabledebug` 是否必需、get_network_map 可见性字段、追踪/game-over 事件、读档进场景耗时、DLC 是否存在、文档目录写入范围;**跑安全对抗测试** | 每个 ❓ 有结论;安全 spike 无逃逸                |
-| M1 笼子与工具      | `hacknet-player.ts` + 白名单 + 工具集断言 + fake-bridge 单测                                                                                                                                                                                              | 无游戏下单测全绿;断言能拦住额外工具            |
-| M2 单任务闭环      | GameManager + RpcRunner + Watchdog + 日志;1 模型 × T0                                                                                                                                                                                                     | 超时/卡死/预算各触发一次且清理干净(无残留进程) |
-| M3 任务集 v0       | HackBench 扩展 + 8~12 题 + 谓词判分                                                                                                                                                                                                                       | 人工通关每题;空 agent 得 0 分                  |
-| M4 矩阵与报告      | 读 models.json、preflight、重复、续跑、leaderboard                                                                                                                                                                                                        | 一键跑 N 模型 × 全套件                         |
-| M5 可选            | 时间冻结补丁、Tier B 沙箱、并行多实例(管道名已按 run 区分)、截图/视觉模态、原版战役切片                                                                                                                                                                   | —                                              |
+| M                  | 内容                                                                                                                                                                                                                                                       | 退出条件                                       |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| **M0 Spike**(先做) | 复制游戏 → 装 BepInEx+Pathfinder → `dotnet build` bridge 并部署 → 管道连通;验证 ❓ 项:`&&`/换行、login 提示态、`-enabledebug` 是否必需、get_network_map 可见性字段、追踪/game-over 事件、读档进场景耗时、DLC 是否存在、文档目录写入范围;**跑安全对抗测试** | 每个 ❓ 有结论;安全 spike 无逃逸               |
+| M1 笼子与工具      | `hacknet-player.ts` + 白名单 + 工具集断言 + fake-bridge 单测                                                                                                                                                                                               | 无游戏下单测全绿;断言能拦住额外工具            |
+| M2 单任务闭环      | GameManager + RpcRunner + Watchdog + 日志;1 模型 × T0                                                                                                                                                                                                      | 超时/卡死/预算各触发一次且清理干净(无残留进程) |
+| M3 任务集 v0       | HackBench 扩展 + 8~12 题 + 谓词判分                                                                                                                                                                                                                        | 人工通关每题;空 agent 得 0 分                  |
+| M4 矩阵与报告      | 读 models.json、preflight、重复、续跑、leaderboard                                                                                                                                                                                                         | 一键跑 N 模型 × 全套件                         |
+| M5 可选            | 时间冻结补丁、Tier B 沙箱、并行多实例(管道名已按 run 区分)、截图/视觉模态、原版战役切片                                                                                                                                                                    | —                                              |
 
 ---
 
@@ -177,7 +178,7 @@ v1 ok
 
 1. **agent 侧集成**:选 B(自写扩展直连管道)?
 
-原生mcp白名单
+选B
 
 1. **任务内容**:自制 `HackBench` 扩展(推荐)还是优先原版战役片段?你的游戏有 Labyrinths DLC 吗(M0 会确认)?
 
@@ -203,6 +204,36 @@ ok
 
 ok
 
-
-
 我希望这个程序启动后自动检测、配置环境，输入api和密钥后启动一个完善精美的、符合游戏风格并且易用的tui，用户start后llm开始速通hacknet
+
+---
+
+## 10. v0.1 实施记录（当前状态，不替代上述用户决策）
+
+### 已实现与实测
+
+- Windows 原生 Bun ≥1.4.4 + pi 1.5.0 RPC；Hacknet 风格 Ink TUI、配置页、masked 会话密钥、provider 元数据导入、Start/Stop、doctor/setup/demo/report。
+- 真实 run 前用无工具、隔离 pi 做 API preflight；不会加载用户全局的 web/provider/MCP 扩展。Pi session 改为仅内存，持久化轨迹统一经编排器脱敏，避免原生会话绕开日志脱敏。
+- 固定 HNPF-MCP commit 已作为 Git 子模块记录；Pathfinder 5.3.4、Roslyn 4.8.0 下载有固定 SHA-256，无需额外安装 .NET SDK。
+- 已从 Steam 原件**复制并冷安装**项目副本；离线 patch 处理 game/Pathfinder/BepInEx 的 Documents 调用、禁用 Steam 初始化，并保留 Pathfinder 所需 IL 结构。安装契约 version 2、offline patch version 2；启动和重编译前验证四个敏感二进制，不能通过普通 adapter rebuild 掩盖已改变的隔离程序集。
+- 游戏 smoke：原版菜单新账号 → 正常启动教程 → 只能点击可见 Continue/Hint → 普通 connect 推进教程；login 用户名/密码提示态可正常输入，输入不会 dispatch 为命令；独立 XML 存档、游戏 framebuffer 截图、owned-PID 清理均通过。个人 Hacknet Accounts / Pathfinder 目录前后指纹未变化。
+- 模型只见 9 个 `hn_*` 工具，image 模式增加 1 个截图工具；命令与提示态输入分别处理，没有通用 shell、宿主文件或原生 MCP 工具。
+- 墙钟、步数、token、连续错误/重复卡死限制，扩展 admission + 外层 watchdog；result 保存 thinking、预算、版本指纹；报告排除 demo，并把 infra/cancel 排除于通过率之外。
+- `bun run check`：TypeScript + **63 个单元/回归测试**；`bun run smoke:pi` 用真实 pi + 本地假模型/假桥接验证工具握手、调用往返和 token 统计，**不使用真实 API/key**。
+
+### Bun 迁移（按后续用户指示）
+
+- 安装、运行 TS/TSX、类型检查、测试、smoke 和 PowerShell 启动器统一改为 Bun；固定 `bun.lock`，移除 npm lock 和 tsx 依赖。
+- `bunfig.toml` 禁用自动 .env 加载，缓存放项目 `runtime/`；锁定安装跳过 lifecycle scripts。
+- doctor / GameSession 检查 Windows 原生 Bun，结果记录真实 Bun runtime，而不是 Bun 的 Node 兼容版本号。
+- Bun 1.4.4 下已重跑 63 个测试、真实 pi RPC + 本地假 API smoke、项目游戏副本 smoke（含真实 NamedPipe、教程/提示态、XML 存档、framebuffer 和 owned-PID 清理）。未使用真实模型/key。
+
+### 尚未完成（不能宣称完整 benchmark 已可用）
+
+- 没有调用用户真实模型，也没有进行真实 LLM 原版完整通关。
+- 当前目标只有原版结局；DLC 文件保留/检测，但 DLC 交互面（包括 IRC 等）、完整通关目标与评分尚未实现。
+- credits mission 终局谓词、game-over、全程邮件/合同/教程仍缺完整流程回归；当前 goal 明确标为 experimental。
+- 模型矩阵、重复、断点续跑、任务集、正式 leaderboard、冻结游戏时间仍属于后续里程碑。
+- 工具笼不构成 OS sandbox；没有自动提权/防火墙规则，强隔离仍需外部 Sandbox / VM。
+
+使用方式、可选截图、安全边界和恢复步骤见 `README.md` / `SECURITY.md`。
