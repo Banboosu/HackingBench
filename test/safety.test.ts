@@ -23,6 +23,13 @@ for (const cmd of [
   "scp file.txt",
   "rm *",
   "solve AXCD",
+  "shell",
+  "Sequencer",
+  "eOS_DeviceScanner",
+  "ForkBomb",
+  "SecurityTracer",
+  "PacificPortcrusher",
+  "SQLBufferOverflow",
 ]) {
   test(`player command accepted: ${cmd}`, () =>
     assert.equal(validateCommand(cmd), cmd));
@@ -52,6 +59,11 @@ for (const cmd of [
   "sudo help",
   "execute anything",
   "quit",
+  "fastHack",
+  "revealAll",
+  "./mcp",
+  "mcp.exe",
+  "loadmission.exe",
   "z".repeat(257),
   "",
 ]) {

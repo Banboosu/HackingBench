@@ -46,6 +46,8 @@ export const configSchema = z
     gameWindowWidth: z.number().int().min(640).max(4096).default(1920),
     gameWindowHeight: z.number().int().min(480).max(4096).default(1080),
     gameFullscreen: z.boolean().default(false),
+    // Startup-only animation skip + normal tutorial kill; no mission/flag writes.
+    skipIntro: z.boolean().default(false),
   })
   .refine(
     (config) => config.maxOutputTokens < config.contextWindow,

@@ -36,7 +36,7 @@ bun run start
 
 工作台运行、依赖安装和测试统一使用 **Bun**：直接执行 TS/TSX，使用 `bun.lock` 和 `bun test`，不再依赖 tsx/npm 或宿主 Node。共享桥接代码有意保留 Bun 支持的 `node:*` 兼容 API，供独立 pi 扩展复用；不改动 pi 自身的实现。
 
-现在直接复用 **pi 原生全屏 TUI**，不再使用独立 Ink 配置页。上方状态面板显示 LLM activity、墙钟、工具/token 统计、最近动作和游戏观测；下方保留 pi 原生编辑器与斜杠命令。不会伪造未经验证的任务完成百分比。
+现在直接复用 **pi 原生全屏 TUI**，不再使用独立 Ink 配置页。上方状态面板显示 LLM activity、实时思维链、墙钟、工具/token 统计、最近动作和游戏观测；下方保留 pi 原生编辑器与斜杠命令。不会伪造未经验证的任务完成百分比。
 
 正常启动后自动检测 Windows Bun、pi、Steam 游戏目录和 DLC。首次配置流程：
 
@@ -83,11 +83,25 @@ API 支持：
 | `/test`               | 确认后执行小型 API 连接测试，不启动游戏                                                 |
 | `/setup`、`/doctor`   | 准备项目副本 / 重新检测环境                                                             |
 | `/start`              | 后台开始一次尝试；demo 模式只播放合成轨迹                                               |
+| `/retry`              | API 失败进入 PAUSED 后，继续同一个存活的游戏/玩家会话；不重新开局                       |
 | `/stop`               | 取消目录获取、preflight 或 run，等待自己创建的进程清理                                  |
 | `/report`             | 查看实验性汇总                                                                          |
 | `/quit`               | 原生退出并清理当前操作                                                                  |
 
 `/start` 不占住编辑器，运行期间可输入 `/stop`。请不要把原生 Esc 当成后台 run 的停止键。setup 的复制/下载/编译目前要等阶段完成，其他取消通过 AbortSignal、RPC abort 和 owned-PID 清理处理。模型/窗口/知识/观测设置修改不改变已经开始的尝试；每个 run 使用启动时的快照。**没有墙钟、工具调用数或 token 硬上限**：这些数字只用于统计和报告，尝试会持续到终局判定、模型调用 `hn_give_up`、基础设施错误或你执行 `/stop`。不要直接强杀工作台，否则可能留下项目游戏或锁文件。
+
+### API 错误暂停与继续
+
+游戏已开始后，模型连接错误、超时、429/5xx 或压缩请求失败，会先走 pi 的原生自动重试；自动工作彻底结束（`agent_settled`）后若仍有 provider 错误，工作台进入 **PAUSED**，不再立即清理游戏和玩家进程。
+
+- 网络恢复后输入 **`/retry`**，在同一个 run、游戏账号和内存中的 pi 会话中继续；不调用新开局、不清空上下文、不重新执行已完成的工具。恢复提示要求模型先 `hn_screen` 再行动。
+- `/resume` 是 pi 原生历史会话选择器，**不是本工作台的继续命令**；这里使用不冲突的 `/retry`。
+- 再次失败可以再次 `/retry`，没有累计恢复次数上限；暂停期间不会自行发送模型请求。`/stop` 和 `/quit` 仍会终止并清理。
+- **只暂停模型请求，不冻结 Hacknet。** 追踪、程序和墙钟继续，可能在断网期间发生游戏内失败；judge 也仍在运行。暂停次数与持续时间单独记为 `providerPauses` / `providerPauseMs`，墙钟不扣除它们。
+- 仅保活恢复：工作台、游戏和 pi 子进程必须仍存活。已结束的 INFRA_ERROR、执行 `/stop`、退出或崩溃后，不能靠 `/retry` 从磁盘续跑；过去已经结束的尝试也不能因此恢复。
+- 同一 run 继续使用开局时的 endpoint、模型和密钥。401/配置等错误即使被保留，也可能必须 `/stop` 后修正配置/凭据再新开；不热替换玩家密钥。不新增模型工具或宿主权限。
+- 游戏进程退出、桥接/鉴权失效、pi 子进程退出、扩展错误或 RPC 通信超时仍是致命基础设施错误；尤其 prompt RPC 超时无法确定是否已接受，不能盲目重发。开局前 preflight 失败也不进入保活状态。
+- Headless 模式可在 stdin 输入 `/retry` 或 `/stop`；无交互输入时用 SIGINT/SIGTERM 停止。
 
 ### 知识与观测设置
 
@@ -101,6 +115,7 @@ API 支持：
 | Observation: **text+image**        | 保留文字工具并增加 `hn_screenshot`，只捕获游戏 framebuffer，不截图桌面；**必须选用支持图像输入的模型**，不因切换设置就自动获得视觉能力 |
 | Game window width / height         | 项目副本的宽度/高度（默认 **1920×1080**，范围 640–4096 / 480–4096）；只写 `runtime/game/Settings.txt`，不改 Steam 原目录               |
 | Game fullscreen: **false**（默认） | 以配置尺寸打开可移动窗口；`true` 使用全屏。窗口/全屏只在启动项目副本前应用                                                             |
+| Skip intro: **false**（默认）      | `true` 跳过开场剧情文字、开机打字/闪屏等待，并通过正常 `kill PID` 关闭教程；从第一封任务邮件开始，不跳后续任务或加速后续重启           |
 
 也可以直接设置，字段名和值均可用原生补全：
 
@@ -112,6 +127,7 @@ API 支持：
 /config gameWindowWidth 1920
 /config gameWindowHeight 1080
 /config gameFullscreen false
+/config skipIntro true
 ```
 
 菜单还包括上下文/单次输出限制、Hacknet 来源目录和 pi.exe 路径。游戏窗口设置在下一次 `/start`（或 `/setup` 修复副本）前写入项目副本；修改不会立即移动已打开的游戏窗口。上下文/输出限制须符合实际模型能力；路径输入留空恢复自动检测，更换游戏来源不会自动重建已准备的副本。API、密钥、模型和思考等级仍分别使用 `/provider`、`/login`、`/model`、`/thinking`；**原生 `/settings` 是 pi 自身设置，不替代 `/config`**。
@@ -165,36 +181,37 @@ Demo 的成功只表示预览结束，`demo: true`、`score: 0`，不进入结�
 
 至少需要 1.5 GB 可用磁盘空间。全部下载、编译器、游戏副本和存档位于项目 `runtime/` 下，不会提交到 Git。游戏由 Windows 原生 Bun 启动；开发时 Bash 是否来自 WSL 不影响应用架构。
 
-启动时通过随机、鉴权的 NamedPipe 验证真实存档根，再调用原版菜单同一 New Game 回调。**不带 debug 参数，不调用 LoadMission，不跳过教程。**
+启动时通过随机、鉴权的 NamedPipe 验证真实存档根，再调用原版菜单同一 New Game 回调。**不带 debug 参数，不调用 LoadMission。** 默认完整开场；启用 `/config skipIntro true` 后只跳过开场表现与教程。bridge 将开场 `IntroTextModule` 标为播放完成，并仅在首次初始化线程内移除表现性 Sleep；教程用正常终端 `kill PID` 关闭，由游戏原逻辑恢复 UI、发送第一封邮件。不直接写入任务 Flag、不加速后续重启、不推进后续任务。
 
 ## 给模型的工具
 
-默认只开放以下 9 个工具；选择 `text+image` 后增加 `hn_screenshot`：
+默认只开放以下 10 个工具；选择 `text+image` 后增加 `hn_screenshot`：
 
-| 工具            | 范围                                                                                        |
-| --------------- | ------------------------------------------------------------------------------------------- |
-| `hn_screen`     | 终端历史、已发现节点、RAM/进程、教程当前文字与按钮状态；不返回隐藏密码、Flag 或任务目标答案 |
-| `hn_cmd`        | 一条经过静态白名单校验的游戏虚拟终端命令；不是宿主 shell                                    |
-| `hn_wait`       | 等待 0.1–30 秒，再观察游戏                                                                  |
-| `hn_input`      | 只在程序等待输入时提交用户名/密码/答案，永不按命令 dispatch                                 |
-| `hn_tutorial`   | 只允许当前可见的教程 Continue / Hint 按钮，不能任意推进教程状态                             |
-| `hn_mail`       | 只列出/读取当前玩家的 inbox                                                                 |
-| `hn_reply`      | 通过原任务目标和 sender 验证提交邮件回复                                                    |
-| `hn_hub`        | 当前连接的任务板中可见合同的列出/接受                                                       |
-| `hn_give_up`    | 结束无法继续的尝试；不能自行宣布成功                                                        |
-| `hn_screenshot` | **可选**，只读取游戏 framebuffer，不截图桌面；需要支持图像输入的模型                        |
+| 工具            | 范围                                                                                                                                                                         |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hn_screen`     | 终端历史、已发现节点、RAM/进程、shell/IP、当前目标 proxy 状态、教程按钮；不返回隐藏密码、Flag 或任务目标答案                                                                 |
+| `hn_cmd`        | 一条经过语法/作弊黑名单校验的游戏虚拟终端命令；所有游戏内 exe 可用；按行内容轮询到输出稳定，支持同一行追加和滚动历史；无变化时以 `output: snapshot` 标记当前终端上下文和状态 |
+| `hn_shell`      | 驱动所有已打开的游戏 shell：对当前连接目标 overload，cancel 停止过载，exit 关闭全部；返回每个 shell 的状态/目标与真实 proxy overloadTicks；不是宿主 shell                    |
+| `hn_wait`       | 等待 0.1–30 秒，再观察游戏                                                                                                                                                   |
+| `hn_input`      | 只在程序等待输入时提交用户名/密码/答案，永不按命令 dispatch                                                                                                                  |
+| `hn_tutorial`   | 只允许当前可见的教程 Continue / Hint 按钮，不能任意推进教程状态                                                                                                              |
+| `hn_mail`       | 只列出/读取当前玩家的 inbox                                                                                                                                                  |
+| `hn_reply`      | 通过原任务目标和 sender 验证提交邮件回复                                                                                                                                     |
+| `hn_hub`        | 当前连接的任务板中可见合同的列出/接受                                                                                                                                        |
+| `hn_give_up`    | 结束无法继续的尝试；不能自行宣布成功                                                                                                                                         |
+| `hn_screenshot` | **可选**，只读取游戏 framebuffer，不截图桌面；需要支持图像输入的模型                                                                                                         |
 
-命令拒绝控制字符、不可见分隔符、shell 元字符、盘符/UNC、父目录穿越，以及 `mcp`、`loadmission`、`dscan` 等作弊命令。未知 exe 不自动加入白名单。因此部分原版虚拟路径用法（例如 `cd ..`）也被保守禁用；可以改用绝对虚拟路径。
+命令拒绝控制字符、不可见分隔符、shell 元字符、盘符/UNC、父目录穿越，以及 `mcp`、`loadmission`、`loadactions`、`dscan`、`debug`、`sudo`、`execute`、`fastHack`、`revealAll` 等调试/作弊命令。**所有游戏内 exe 都可用**，包括 DLC、任务下载、`Sequencer`、`eOS_DeviceScanner`、`forkbomb`、`securitytracer` 等；未知名称只会由游戏返回 command not found，不会触达宿主。`cd ..` 仍因路径越界被禁用，可改用绝对虚拟路径。
 
 模型不获得 read/bash/write、浏览器、任意 MCP 或 provider 管理命令。pi 使用独立 agent 目录、空 workspace、明确工具名单、禁用自动扩展/MCP/上下文文件，并在启动和每次 agent 开始时再次断言工具集。**原生 pi 会话仅在内存中保存**；磁盘轨迹由工作台统一脱敏后写入。
 
 ## 计时、判定和产物
 
 - **没有默认墙钟、工具调用数或 token 上限。** 这些值只统计，不参与 admission 或停止判断。
-- 墙钟从游戏接受输入、启动隔离 agent 的阶段开始；不含游戏复制/下载/初始开机，停止后不把清理时间算入。
+- 墙钟从游戏接受输入、启动隔离 agent 的阶段开始；不含游戏复制/下载/初始开机，停止后不把清理时间算入。`skipIntro` 写入配置快照与结果；报告将跳过/完整开场分组，历史未标记结果视为完整开场。
 - 分别记录墙钟、assistant 响应时间和工具执行耗时。**游戏实时运行，模型思考时不暂停追踪计时。**
 - token 由 pi 统计轮询获取，包含 session 统计报告的 cached/summary 等用量；它只是报告值，不是计费硬上限，也可能包含进行中的请求。
-- 运行停止条件仅为：judge 判定成功、模型调用 `hn_give_up`、基础设施错误或用户 `/stop`。没有自动 watchdog 或连续失败/重复动作强制停止。
+- 运行停止条件仅为：judge 判定成功、模型调用 `hn_give_up`、致命基础设施错误或用户 `/stop`。模型/provider 失败在安全的 settled 边界进入可恢复 PAUSED，不算结束。没有自动 watchdog 或连续失败/重复动作强制停止。
 - judge 是 runner 的特权通道，不把隐藏答案交给模型。当前仅实验性识别原版 credits mission，未完成完整通关回归。
 - `infra_error` / `cancelled` 不计入通过率；demo 不写真实结果集。报告按 endpoint、协议、模型、thinking、知识/观测、goal、版本指纹与 adapter provenance 分组；耗时/tool/token 仅作结果字段保留。
 
@@ -224,7 +241,7 @@ runtime/
 ## 验证
 
 ```powershell
-bun run check                        # TypeScript + 102 个单元/回归测试，无真实 API/游戏
+bun run check                        # TypeScript + 140 个单元/回归测试，无真实 API/游戏
 bun run smoke:tui                    # 原生 pi + ANSI 终端仿真、resize、登录/模型/TPS；生成静态预览
 bun run smoke:pi                     # 真实 pi 1.5 RPC + 本机假模型/假桥接，无真实 API/游戏
 bun run smoke:game                   # 显式启动项目内游戏 GUI，无 LLM/API/正式分数
@@ -232,20 +249,21 @@ bun run smoke:game                   # 显式启动项目内游戏 GUI，无 LLM
 
 已在本机验证：
 
-- Windows Bun 1.4.4 下 TypeScript 和 102 个测试通过，包含原防线、原生控制面、密钥遮罩、endpoint 绑定、模型目录安全、响应式面板，以及 TPS 的加权/缺失 usage/取消/失败处理。新增 `/config` 菜单/参数/取消/校验/运行中锁定与配置快照回归，验证四种知识/观测组合确实改变隔离玩家的 prompt、图像输入声明及准确工具名单；游戏窗口宽高/全屏设置包含边界校验、保留其他 Settings.txt 行、幂等写入和禁止越界写入测试。另含预算字段/命令移除、统计只计数不停止，以及 thinking 按 `reasoning` / `thinkingLevelMap` 收敛的回归。
+- Windows Bun 1.4.4 下 TypeScript 和 140 个测试通过，包含原防线、原生控制面、密钥遮罩、endpoint 绑定、模型目录安全、响应式面板，以及 TPS 的加权/缺失 usage/取消/失败处理。新增 `/config` 菜单/参数/取消/校验/运行中锁定与配置快照回归，验证四种知识/观测组合确实改变隔离玩家的 prompt、图像输入声明及准确工具名单；游戏窗口宽高/全屏设置包含边界校验、保留其他 Settings.txt 行、幂等写入和禁止越界写入测试。另含预算字段/命令移除、统计只计数不停止、thinking 按 `reasoning` / `thinkingLevelMap` 收敛，以及 `hn_shell` 只驱动游戏内 shell overload、所有游戏内 exe 默认放行且只拦截调试/作弊命令、hn_cmd 自动轮询输出/状态快照的回归。终端回归覆盖超过30行、固定29行滚动窗口、同一行追加、多批/延迟输出、清屏后输出、最后一次屏幕读取竞态与取消；`scripts/check-terminal-history.ps1` 使用临时游戏程序集夹具（仅禁用副本的 BepInEx module initializer，不启动游戏）验证真实 bridge 的100行读取、尾部窗口和原地更新。真实 game smoke 也断言超过30行后连续 `ls` 的主结果包含目录输出，不只检查开局 `help`。
 - 真实原生 `InteractiveMode` + 开发测试用 `@xterm/headless`：检查实际 ANSI viewport，验证面板、遮罩 `/login`、项目凭据写入/移除、原生模型选择弹窗和 high thinking、后台假 `/start` / `/stop`、55–200 列 / 最高 70 行窗口 resize 和 TPS 保留；包含 168×54、200×70 大屏首行定位、环境摘要去重、多行编辑与补全检查，以及原生 `/config` 菜单、L0/L1、text/text+image 选择与 55×20 设置菜单；生成 `runtime/ui-preview/` 下的 HTML/text 预览。不启动游戏，不调用真实 API。
 - 可选原生游戏 smoke（不调用 API）：BepInEx 加载第 3 个插件声明 per-monitor-v2 DPI；1920×1080 windowed 的物理客户区和游戏截图均为 1920×1080，并验证教程、登录、隔离存档、owned-PID 清理与个人存档不变。
-- 真实 pi RPC 的加载、无工具 preflight、准确工具集握手、假模型发起 `hn_screen`、假桥接响应、token 统计；从回复 usage 验证 TPS 只用输出 token。断言 `high` 实际序列化为请求中的 `reasoning_effort: high`，以及阻塞中的 preflight 可以取消并等待 owned-process 清理。
+- 真实 pi RPC 的加载、无工具 preflight、准确工具集握手、假模型发起 `hn_screen`、假桥接响应、token 统计；从回复 usage 验证 TPS 只用输出 token。断言 `high` 实际序列化为请求中的 `reasoning_effort: high`，以及阻塞中的 preflight 可以取消并等待 owned-process 清理。另用本机假服务连续返回503，确认原生重试耗尽后暂停请求、恢复同一 sessionId、保留工具结果且没有重放旧工具；原生 TUI smoke 覆盖 PAUSED、`/retry` 与同一尝试恢复。
 - 原版新账号、教程 Continue 的可见状态约束、普通 connect 命令推进教程、login 提示态的两段输入、终端观测、独立 XML 保存、游戏-only 截图、按 owned PID 清理。
 - 游戏 smoke 前后检查个人 Hacknet Accounts 与 Pathfinder 目录指纹，未发生变化。
 
-**尚未完成**：真实模型的长时间 campaign run、完整教程/邮件/任务板回归、可靠 game-over/终局验证、DLC 全流程及评分、模型矩阵/重复/断点续跑、冻结游戏时间。`PLAN.md` 保留设计与这些后续里程碑。
+**尚未完成**：真实模型的长时间 campaign run、完整教程/邮件/任务板回归、可靠 game-over/终局验证、DLC 全流程及评分、模型矩阵/重复/退出后从磁盘断点续跑、冻结游戏时间。`PLAN.md` 保留设计与这些后续里程碑。
 
 ## 故障处理
 
 - **提示使用旧隔离 patch**：先确保没有工作台 run，把项目 `runtime/game/` 移开，再 `bun run setup`。不要对 Steam 原件运行 patch 脚本。
 - **`setup.lock` / `active-run.lock` 已存在**：先检查对应工作台是否仍活着；异常退出后确认项目游戏和 pi 子进程都已结束，再手动移除该锁。程序不会按游戏进程名清场。
 - **`game.staging/` 已存在**：表示安装被中断。检查后移开这个项目临时目录，再重试；程序不会擅自覆盖未知目录。
+- **游戏中 API 连接错误 / 429 / 5xx**：看到 PAUSED 后修复网络，输入 `/retry` 保持同一会话继续；不要误用 `/start`（新开局）或 pi 原生 `/resume`（历史会话选择）。暂停不冻结游戏；`/stop` 会结束尝试。
 - **API 401/协议错误**：检查 `/provider` 的 Base URL/协议、原生 `/login` 的 endpoint ID、精确 model ID；先 `/test`。不要把 key 放进 URL。更换 endpoint 后必须单独登录。
 - **提示需要 Bun / 意外使用 WSL Bun**：从 Windows PowerShell 启动 `bun run doctor`，确认输出 `platform: win32`、`runtime: Bun …`。不要用 `node` 或 `tsx` 启动工作台。
 

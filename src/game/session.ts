@@ -5,7 +5,11 @@ import { randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { RUNTIME } from "../config.js";
-import { COMMANDS, assertNoLinks, childEnvironment } from "../core/safety.js";
+import {
+  BLOCKED_COMMANDS,
+  assertNoLinks,
+  childEnvironment,
+} from "../core/safety.js";
 import { terminate } from "../core/process.js";
 import { Bridge } from "./bridge.js";
 import { verifyBinaries } from "./integrity.js";
@@ -27,6 +31,7 @@ export class GameSession extends EventEmitter {
     runDir: string,
     window: GameWindow,
     signal?: AbortSignal,
+    options: { skipIntro?: boolean } = {},
   ): Promise<unknown> {
     if (process.platform !== "win32" || !supportedBun())
       throw new Error(
@@ -54,7 +59,7 @@ export class GameSession extends EventEmitter {
     await mkdir(documents, { recursive: true });
     await writeFile(
       path.join(root, "BepInEx", "config", "com.HnpfMcp.Bridge.cfg"),
-      `[Pipe]\nName = ${this.pipeName}\nToken = ${this.token}\nAutoToken = false\n\n[Safety]\nReadOnly = false\nAllowedCommands = ${COMMANDS.filter((c) => c !== "quit").join(",")}\nBlockedCommands = mcp,loadmission,loadactions,dscan,debug,sudo,execute,quit\n`,
+      `[Pipe]\nName = ${this.pipeName}\nToken = ${this.token}\nAutoToken = false\n\n[Safety]\nReadOnly = false\nAllowedCommands = \nBlockedCommands = ${BLOCKED_COMMANDS.join(",")}\n`,
       { mode: 0o600 },
     );
     signal?.throwIfAborted();
@@ -63,6 +68,7 @@ export class GameSession extends EventEmitter {
       env: childEnvironment({
         HACKINGBENCH_SAVE_DIR: saves,
         HACKINGBENCH_DOCUMENTS: documents,
+        HACKINGBENCH_SKIP_INTRO: options.skipIntro ? "1" : "0",
       }),
       shell: false,
       // This is the visible game GUI, not a background RPC/utility process.
@@ -118,15 +124,32 @@ export class GameSession extends EventEmitter {
       signal,
       60000,
     );
+    let tutorialSkipped = false;
     const loadDeadline = performance.now() + 60000;
     while (performance.now() < loadDeadline) {
       signal?.throwIfAborted();
       if (this.failure) throw this.failure;
       try {
         const screen = await this.bridge.call("bench.screen", {}, signal);
-        if (screen.booting === false && screen.inputEnabled === true)
-          return screen;
-        lastError = "Game is still showing its boot sequence.";
+        if (screen.booting === false && screen.inputEnabled === true) {
+          if (!options.skipIntro || (tutorialSkipped && !screen.tutorial))
+            return screen;
+          // A startup option, not an extra agent capability: use the exact
+          // normal terminal kill path once the opening tutorial is ready.
+          // AdvancedTutorial.Killed restores the UI and sends the first mail.
+          const tutorial = screen.processes?.exes?.find(
+            (exe: { type?: string }) => exe.type === "AdvancedTutorial",
+          );
+          if (!tutorialSkipped && screen.tutorial?.canContinue && tutorial) {
+            await this.bridge.call(
+              "bench.command",
+              { cmd: `kill ${tutorial.pid}` },
+              signal,
+            );
+            tutorialSkipped = true;
+          }
+          lastError = "Waiting for opening tutorial skip to finish.";
+        } else lastError = "Game is still showing its boot sequence.";
       } catch (e) {
         lastError = (e as Error).message;
       }

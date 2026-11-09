@@ -278,7 +278,7 @@ export function controllerExtension(options: ControllerOptions) {
     pi.on("session_before_compact", () => ({ cancel: true }));
     pi.on("input", () => {
       notify(
-        "Control deck only: use /config, /provider, /login, /model, /test, /start or /stop. No prompt was sent.",
+        "Control deck only: use /config, /provider, /login, /model, /test, /start, /retry or /stop. No prompt was sent.",
       );
       return { action: "handled" };
     });
@@ -566,6 +566,16 @@ export function controllerExtension(options: ControllerOptions) {
             state.phase = phase;
             update();
           });
+          runner.on("paused", (reason) => {
+            state.log = safe(
+              `Model requests PAUSED · /retry to continue · game clock still running. ${reason}`,
+            );
+            update();
+          });
+          runner.on("resumed", () => {
+            state.log = "";
+            update();
+          });
           runner.on("activity", (activity) => {
             state.activity = safe(activity);
             update();
@@ -584,9 +594,19 @@ export function controllerExtension(options: ControllerOptions) {
             observeDashboard(state, safe(text));
             update();
           });
+          runner.on("reasoning", (text) => {
+            // An empty delta is our assistant-turn reset from RunController.
+            state.reasoning = text
+              ? safe(state.reasoning + text).slice(-6000)
+              : "";
+            if (text) state.activity = "thinking";
+            update();
+          });
           runner.on("assistant", (text) => {
-            state.assistant = safe(state.assistant + text).slice(-2000);
-            state.activity = "responding";
+            state.assistant = text
+              ? safe(state.assistant + text).slice(-2000)
+              : "";
+            if (text) state.activity = "responding";
             update();
           });
           runner.on("log", (text) => {
@@ -604,6 +624,17 @@ export function controllerExtension(options: ControllerOptions) {
           state.log = `${demo ? "SIMULATED / NOT SCORED" : result.status.toUpperCase()} · ${result.runId} · ${result.steps} tools · ${Math.round(result.wallMs / 1000)}s`;
           update();
         });
+      },
+    );
+    command(
+      "retry",
+      "Resume the same live player/game after an API failure; game time was not paused",
+      async () => {
+        if (!task || !runner)
+          throw new Error(
+            "No live paused run. /retry cannot reopen a finished attempt.",
+          );
+        await runner.resume();
       },
     );
     command(

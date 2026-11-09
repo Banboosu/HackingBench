@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { loadConfig } from "./config.js";
+import { createInterface } from "node:readline";
 import { inspect, providerCatalog } from "./environment.js";
 import { prepareGame } from "./game/setup.js";
 import { RunController } from "./runner.js";
@@ -14,7 +15,7 @@ import {
 const args = process.argv.slice(2);
 const usage = `HackingBench — native pi Hacknet workbench
 
-  bun run start             Native pi TUI: /provider /login /model /start /stop
+  bun run start             Native pi TUI: /provider /login /model /start /retry /stop
   bun run demo              Safe native-TUI preview (no API/game)
   bun run doctor            Detect Windows Bun, pi, Steam game and DLC
   bun run setup             Prepare isolated game copy (never launches)
@@ -66,11 +67,22 @@ async function main(): Promise<void> {
     run.on("log", print);
     run.on("action", print);
     run.on("observation", print);
+    const input = demo
+      ? undefined
+      : createInterface({ input: process.stdin, terminal: false });
+    input?.on("line", (line) => {
+      const text = line.trim();
+      if (text === "/retry") void run.resume().catch((e) => print(e.message));
+      else if (text === "/stop") stop();
+      else if (text)
+        print("Headless control input supports only /retry and /stop.");
+    });
     try {
       const result = await run.run(config, key, demo);
       print(JSON.stringify(result, null, 2));
       if (result.status !== "success") process.exitCode = 1;
     } finally {
+      input?.close();
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
     }

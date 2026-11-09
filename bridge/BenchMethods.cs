@@ -51,6 +51,11 @@ public static partial class Executor
                 }
                 result["network"] = visible;
                 result["processes"] = GetProcesses(os);
+                // Shells are the player's own compromised nodes; proxy state is
+                // only for the currently connected target. Neither reveals a
+                // hidden node, credential, mission goal or firewall solution.
+                result["shells"] = ShellInfo(os);
+                result["proxy"] = BenchProxyInfo(os.connectedComp);
                 return result;
             }
             case "bench.command":
@@ -60,9 +65,37 @@ public static partial class Executor
                 foreach (var ch in cmd)
                     if (char.IsControl(ch) || (char.IsWhiteSpace(ch) && ch != ' ') || char.GetUnicodeCategory(ch) == UnicodeCategory.Format || "&|;`$()<>\\:".Contains(ch))
                         throw new ArgumentException("Command contains forbidden syntax.");
+                var first = cmd.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)[0].ToLowerInvariant();
+                if (first.Contains('/') || first.Contains('\\'))
+                    throw new ArgumentException("Command names must be bare game commands or executables.");
                 if (os.bootingUp || !os.inputEnabled) throw new InvalidOperationException("Game input is not ready; use hn_wait.");
                 if (os.terminal.preventingExecution) throw new InvalidOperationException("A program is awaiting input or busy. Check hn_screen and use hn_input if prompted.");
-                return ExecuteCommand(os, cmd); // Includes upstream AllowedCommands policy.
+                return ExecuteCommand(os, cmd); // Includes upstream BlockedCommands policy.
+            }
+            case "bench.shell":
+            {
+                // The game's own ShellOverloaderExe is the equivalent of the
+                // visible Shell window's overload/cancel/exit buttons. It is
+                // not a mission/flag shortcut. The target is always the
+                // currently connected computer.
+                if (os.connectedComp == null)
+                    throw new InvalidOperationException("Connect to the proxy target first.");
+                if (os.bootingUp || !os.inputEnabled)
+                    throw new InvalidOperationException("Game input is not ready; use hn_wait.");
+                var action = (Str(req.Params, "action") ?? "").Trim().ToLowerInvariant();
+                if (action != "overload" && action != "cancel" && action != "exit")
+                    throw new ArgumentException("Shell action must be overload, cancel or exit.");
+                var active = os.exes.OfType<ShellExe>().Where(s => !s.isExiting && !s.needsRemoval).ToList();
+                if (active.Count == 0)
+                    throw new InvalidOperationException("No active shells. Run shell on an admin node first.");
+                // Native argv includes the command at index 0; the flag is at
+                // index 1. Passing only { flag } prints usage and does NOTHING.
+                var flag = action == "overload" ? "-o" : action == "cancel" ? "-c" : "-e";
+                ShellOverloaderExe.RunShellOverloaderExe(new[] { "ConShell", flag }, os, os.connectedComp);
+                var result = new Dictionary<string, object> { ["ok"] = true, ["action"] = action, ["affected"] = active.Count };
+                result["shells"] = ShellInfo(os);
+                result["proxy"] = BenchProxyInfo(os.connectedComp);
+                return result;
             }
             case "bench.input":
             {
@@ -154,6 +187,32 @@ public static partial class Executor
             }
             default: throw new ArgumentException("Unknown benchmark method.");
         }
+    }
+    private static object ShellInfo(OS os)
+    {
+        var active = os.exes.OfType<ShellExe>().Where(s => !s.isExiting && !s.needsRemoval).ToList();
+        var entries = active.Select(s => new Dictionary<string, object> {
+            ["pid"] = s.PID,
+            ["hostIP"] = (ReadMember(s, "compThisShellIsRunningOn") as Computer)?.ip,
+            ["state"] = ReadMember(s, "state"), // 0 idle, 1 overloading, -1 exiting
+            ["targetIP"] = ReadMember(s, "destinationIP"),
+        }).ToList();
+        return new Dictionary<string, object> {
+            ["count"] = entries.Count,
+            ["ips"] = entries.Select(e => e["hostIP"]).ToList(),
+            ["entries"] = entries,
+        };
+    }
+    private static object BenchProxyInfo(Computer comp)
+    {
+        if (comp == null || !comp.hasProxy) return null;
+        // Hacknet uses proxyOverloadTicks, not proxyTime or
+        // proxyOverloadRemainingTime. This is the visible proxy progress.
+        return new Dictionary<string, object> {
+            ["hasProxy"] = comp.hasProxy,
+            ["proxyActive"] = comp.proxyActive,
+            ["overloadTicks"] = comp.proxyOverloadTicks,
+        };
     }
     private static Folder PlayerInbox(OS os)
     {

@@ -142,6 +142,20 @@ test("legacy budget-stopped records do not count as model failures", () => {
   assert.match(text, /\| 1 \| 100\.0% \| 0 \|/);
 });
 
+test("report keeps skipped-intro runs separate and treats legacy runs as full intro", () => {
+  const text = summarizeResults([
+    result("success"),
+    result("success", { skipIntro: false }),
+    result("gave_up", { skipIntro: true }),
+  ]);
+  assert.equal(
+    text.split("\n").filter((l) => l.startsWith("| https:")).length,
+    2,
+  );
+  assert.match(text, /full-intro.*\| 2 \| 100\.0%/);
+  assert.match(text, /skip-intro.*\| 1 \| 0\.0%/);
+});
+
 test("report separates thinking levels, endpoints and goals", () => {
   const text = summarizeResults([
     result("success"),

@@ -9,6 +9,7 @@ type SettingKey =
   | "gameWindowWidth"
   | "gameWindowHeight"
   | "gameFullscreen"
+  | "skipIntro"
   | "gameSource"
   | "piExecutable";
 export interface BenchSetting {
@@ -62,6 +63,22 @@ export const BENCH_SETTINGS: readonly BenchSetting[] = [
     choices: [
       { value: "false", label: "false — Windowed with the configured size" },
       { value: "true", label: "true — Fullscreen" },
+    ],
+  },
+  {
+    key: "skipIntro",
+    label: "Skip intro",
+    boolean: true,
+    help: "Skip the opening story text, boot/typewriter/flicker delays and dismiss the tutorial using normal kill behavior. Start with the first email. Next run only; later reboots and missions are unchanged.",
+    choices: [
+      {
+        value: "false",
+        label: "false — Play the original opening tutorial (default)",
+      },
+      {
+        value: "true",
+        label: "true — Skip boot animation + tutorial; start with first email",
+      },
     ],
   },
   {

@@ -9,6 +9,7 @@ import { prepareGame } from "./game/setup.js";
 import { GameSession } from "./game/session.js";
 import { PLAYER_TOOLS, assertNoLinks, redact } from "./core/safety.js";
 import { RunStats } from "./core/stats.js";
+import { ProviderRecovery, RESUME_PROMPT } from "./core/recovery.js";
 import { OutputThroughput } from "./core/throughput.js";
 import { Journal } from "./core/journal.js";
 import { PiRpc } from "./pi/rpc.js";
@@ -32,6 +33,9 @@ export interface RunResult {
   toolMs: number;
   knowledge: string;
   observation: string;
+  skipIntro?: boolean;
+  providerPauses?: number;
+  providerPauseMs?: number;
   error?: string;
   outputTokens?: number;
   generationMs?: number;
@@ -57,6 +61,17 @@ export class RunController extends EventEmitter {
   private stopping?: RunStatus;
   private wake?: () => void;
   private active = false;
+  private recovery?: ProviderRecovery;
+  get paused(): boolean {
+    return this.recovery?.paused ?? false;
+  }
+  async resume(): Promise<void> {
+    if (!this.recovery)
+      throw new Error(
+        "No live paused run. /retry cannot reopen a finished attempt.",
+      );
+    await this.recovery.resume();
+  }
   stop(): void {
     this.cancellation.abort();
     this.finish("cancelled");
@@ -64,6 +79,7 @@ export class RunController extends EventEmitter {
   private finish(status: RunStatus): void {
     if (this.stopping) return;
     this.stopping = status;
+    this.recovery?.close();
     this.stoppedAt = performance.now();
     this.wake?.();
   }
@@ -147,7 +163,9 @@ export class RunController extends EventEmitter {
       safeLog(
         "Starting project game copy; personal Steam instance is not used or stopped.",
       );
-      const initial = await game.start(folder, gameWindow(config), signal);
+      const initial = await game.start(folder, gameWindow(config), signal, {
+        skipIntro: config.skipIntro,
+      });
       const marker = JSON.parse(
         await readFile(
           path.join(RUNTIME, "game", ".hackingbench-install.json"),
@@ -182,6 +200,49 @@ export class RunController extends EventEmitter {
         }
         return false;
       };
+      this.recovery = new ProviderRecovery({
+        restart: async () => {
+          if (this.stopping) throw new Error("Run is stopping.");
+          lastProviderError = "";
+          const accepted = await rpc.request("prompt", {
+            message: RESUME_PROMPT,
+          });
+          if (accepted?.disposition !== "started")
+            throw new Error(
+              "Resume prompt was not started; refusing an ambiguous continuation.",
+            );
+        },
+        paused: (reason) => {
+          const message = redact(reason, [key, token]);
+          record("events.jsonl", {
+            type: "run_paused",
+            reason: message,
+            ...this.recovery!.snapshot(),
+          });
+          this.emit("phase", "PAUSED");
+          this.emit("activity", "paused");
+          this.emit("paused", message);
+          safeLog(
+            `Model requests paused: ${message} Use /retry to continue this same session, or /stop. The game clock is still running.`,
+          );
+        },
+        resumed: () => {
+          record("events.jsonl", {
+            type: "run_resumed",
+            ...this.recovery!.snapshot(),
+          });
+          this.emit("phase", "RUNNING");
+          this.emit("activity", "thinking");
+          this.emit("resumed");
+          safeLog(
+            "Resuming the same game and player session; completed tools are not replayed.",
+          );
+        },
+        fatal: (e) => {
+          error = redact(e.message, [key, token]);
+          this.finish("infra_error");
+        },
+      });
       const calls = new Map<string, string>();
       rpc.on("diagnostic", (s) =>
         record("events.jsonl", { type: "pi_diagnostic", text: s }),
@@ -213,8 +274,18 @@ export class RunController extends EventEmitter {
         if (e.type === "message_start" && e.message?.role === "assistant") {
           thinkingSince = performance.now();
           throughput.start();
+          // A new assistant turn starts with a clean live view. The native
+          // thinking blocks are streamed below; final text is only a fallback
+          // for non-reasoning models or providers that redact reasoning.
+          this.emit("reasoning", "");
+          this.emit("assistant", "");
           this.emit("activity", "thinking");
         }
+        if (
+          e.type === "message_update" &&
+          e.assistantMessageEvent?.type === "thinking_delta"
+        )
+          this.emit("reasoning", e.assistantMessageEvent.delta);
         if (
           e.type === "message_update" &&
           e.assistantMessageEvent?.type === "text_delta"
@@ -264,13 +335,13 @@ export class RunController extends EventEmitter {
             this.finish("gave_up");
           else if (!this.stopping) void checkCompletion();
         }
-        if (e.type === "agent_settled") this.emit("activity", "settled");
+        if (e.type === "compaction_end" && e.errorMessage)
+          lastProviderError = e.errorMessage;
+        if (e.type === "auto_retry_end" && e.success === false && e.finalError)
+          lastProviderError = e.finalError;
         if (e.type === "agent_settled" && !this.stopping && ready) {
-          if (lastProviderError) {
-            error = lastProviderError;
-            this.finish("infra_error");
-            return;
-          }
+          if (!this.recovery!.settled(lastProviderError)) return;
+          this.emit("activity", "settled");
           void rpc
             .request("prompt", {
               message:
@@ -323,6 +394,7 @@ export class RunController extends EventEmitter {
           llmMs: liveLlmMs,
           toolMs,
           ...throughput.snapshot(),
+          ...this.recovery!.snapshot(),
         });
       }, 250);
       let judging = false;
@@ -379,6 +451,7 @@ export class RunController extends EventEmitter {
         thinkingSince = undefined;
       }
       throughput.discard();
+      this.recovery?.close();
       this.emit("phase", "CLEANUP");
       await this.rpc?.stop();
       await game?.close().catch(() => undefined);
@@ -404,8 +477,10 @@ export class RunController extends EventEmitter {
       llmMs,
       toolMs,
       ...throughput.snapshot(),
+      ...this.recovery?.snapshot(),
       knowledge: config.knowledge,
       observation: config.observation,
+      skipIntro: config.skipIntro,
       error: error ? redact(error, [key, game?.token ?? ""]) : undefined,
       evidence,
       goal: "vanilla-credits-mission-v1-experimental",
@@ -484,6 +559,7 @@ export class RunController extends EventEmitter {
       toolMs: 0,
       knowledge: config.knowledge,
       observation: "text",
+      skipIntro: config.skipIntro,
       goal: "ui-preview-only",
       demo: true,
       thinking: "off",

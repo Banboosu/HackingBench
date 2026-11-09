@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { Bridge } from "./bridge.js";
 import { validateCommand } from "../core/safety.js";
+import { sameTerminal, terminalDelta, terminalHistory } from "./terminal.js";
 
 export function boundedText(value: unknown, maxBytes = 4096): string {
   const text =
@@ -19,27 +20,78 @@ export class Player {
   }
   async cmd(input: string, signal?: AbortSignal): Promise<unknown> {
     const cmd = validateCommand(input);
-    const before = await this.bridge.call(
-      "terminal.history",
-      { lines: 120 },
-      signal,
-    );
+    const readHistory = async () =>
+      terminalHistory(
+        await this.bridge.call("terminal.history", { lines: 120 }, signal),
+      );
+    const before = await readHistory();
     await this.bridge.call("bench.command", { cmd }, signal);
-    // Command submission is not completion. Allow asynchronous executables to progress.
-    await delay(650, undefined, { signal });
-    const after = await this.bridge.call(
-      "terminal.history",
-      { lines: 120 },
-      signal,
-    );
-    const delta = Math.max(0, Number(after.total) - Number(before.total));
+    // OS.execute runs asynchronously. Stability is based on content, NOT
+    // just the count: write() appends to existing rows and legacy bridges may
+    // return a fixed-size rolling window whose total never increases.
+    const deadline = performance.now() + 1500;
+    const settleMs = 120;
+    let lastChange = performance.now();
+    let changed = false;
+    let reset = false;
+    let after = before;
+    while (performance.now() < deadline) {
+      await delay(40, undefined, { signal });
+      const next = await readHistory();
+      if (!sameTerminal(after, next)) {
+        reset ||= terminalDelta(after, next).reset;
+        changed = true;
+        lastChange = performance.now();
+      }
+      after = next;
+      if (changed && performance.now() - lastChange >= settleMs) break;
+    }
+    const output = () => {
+      const delta = terminalDelta(before, after);
+      const cleared = reset || delta.reset;
+      return {
+        cmd,
+        lines: (cleared ? after.lines : delta.lines).slice(-120),
+        ...(cleared ? { cleared: true } : {}),
+      };
+    };
+    let result = output();
+    if (result.lines.length || result.cleared) return result;
+    const snapshot = (await this.screen(signal)) as Record<string, any>;
+    // Output can arrive between the last poll and this fresh screen read.
+    // Promote it to the primary result instead of incorrectly claiming silence.
+    if (snapshot.terminal) after = terminalHistory(snapshot.terminal);
+    result = output();
+    if (result.lines.length || result.cleared) return result;
+    // No observable change: provide explicitly labelled current context/state,
+    // never an empty primary result paired with a misleading 'no new line'.
+    const terminal = { lines: after.lines.slice(-20), total: after.total };
     return {
       cmd,
-      lines: delta ? after.lines.slice(-Math.min(delta, 120)) : [],
-      note: delta
-        ? undefined
-        : "Submitted; no new terminal output yet. Use hn_wait/hn_screen for running programs.",
+      lines: terminal.lines,
+      output: "snapshot",
+      screen: {
+        connectedIP: snapshot.connectedIP,
+        connectedName: snapshot.connectedName,
+        thisComputerIP: snapshot.thisComputerIP,
+        prompt: snapshot.prompt,
+        awaitingInput: snapshot.awaitingInput,
+        tutorial: snapshot.tutorial,
+        network: snapshot.network,
+        processes: snapshot.processes,
+        shells: snapshot.shells,
+        proxy: snapshot.proxy,
+        terminal,
+      },
     };
+  }
+  async shell(
+    action: "overload" | "cancel" | "exit",
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (!["overload", "cancel", "exit"].includes(action))
+      throw new Error("Unknown shell action.");
+    return this.bridge.call("bench.shell", { action }, signal);
   }
   async wait(seconds: number, signal?: AbortSignal): Promise<unknown> {
     if (!Number.isFinite(seconds) || seconds < 0.1 || seconds > 30)

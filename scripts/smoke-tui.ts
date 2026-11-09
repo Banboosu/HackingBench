@@ -60,9 +60,26 @@ const id = endpointIdentity(config);
 const terminal = new TestTerminal();
 const previousConfig = await readFile(CONFIG_FILE).catch(() => undefined);
 let starts = 0;
+let resumes = 0;
+let currentRunner: FakeRunner | undefined;
 const runConfigs: BenchConfig[] = [];
 let finishRun: (() => void) | undefined;
 class FakeRunner extends EventEmitter {
+  paused = false;
+  pause() {
+    this.paused = true;
+    this.emit("phase", "PAUSED");
+    this.emit("activity", "paused");
+    this.emit("paused", "Connection error. (synthetic)");
+  }
+  async resume() {
+    assert.equal(this.paused, true);
+    this.paused = false;
+    resumes++;
+    this.emit("phase", "RUNNING");
+    this.emit("activity", "thinking");
+    this.emit("resumed");
+  }
   async run(snapshot: BenchConfig) {
     runConfigs.push(snapshot);
     starts++;
@@ -98,6 +115,10 @@ class FakeRunner extends EventEmitter {
         network: [{}, {}],
       }),
     );
+    this.emit(
+      "reasoning",
+      "Inspecting the target network before probing ports.",
+    );
     this.emit("assistant", "Checking open ports, then replying to the client.");
     this.emit("activity", "thinking");
     await new Promise<void>((resolve) => {
@@ -129,7 +150,10 @@ const runtime = await createWorkbench(config, false, {
   persist: async (value) => {
     saved.push(value);
   },
-  makeRunner: () => new FakeRunner() as unknown as RunController,
+  makeRunner: () => {
+    currentRunner = new FakeRunner();
+    return currentRunner as unknown as RunController;
+  },
 });
 const mode = new InteractiveMode(runtime, { terminal, tuiMode: "fullscreen" });
 async function capture(name: string): Promise<string> {
@@ -177,6 +201,7 @@ try {
     "Startup environment did not render.",
   );
   const idle = await capture("native-idle-100x36");
+  assert.doesNotMatch(idle, /Extension issues|conflicts with built-in/);
   for (const [columns, rows] of [
     [168, 54],
     [200, 70],
@@ -194,12 +219,14 @@ try {
     assert.match(frame, /RUN TELEMETRY/);
     assert.match(frame, /COMMAND/);
   }
+  assert.doesNotMatch(idle, /COMMAND\s*\/\/\s*native pi/);
+  assert.doesNotMatch(idle, /RUN TELEMETRY\s*\/\//);
   for (const title of [
     "OPERATOR",
     "AGENT ACTIVITY",
     "LIVE TERMINAL",
     "RUN TELEMETRY",
-    "COMMAND // native pi",
+    "COMMAND",
   ])
     assert.ok(
       idle.includes(title),
@@ -293,7 +320,7 @@ try {
   );
   terminal.input?.("\x1b");
   await until(
-    () => frameIncludes("COMMAND // native pi"),
+    () => frameIncludes("COMMAND"),
     "Esc did not return from settings to the native editor.",
   );
   await settingsTask;
@@ -406,6 +433,7 @@ try {
     const frame = await capture(`native-running-${columns}x${rows}`);
     assert.match(frame, /HACKINGBENCH/);
     assert.match(frame, /COMMAND/);
+    assert.doesNotMatch(frame, /COMMAND\s*\/\/\s*native pi/);
     assert.ok(
       frame.includes("/stop"),
       "Native controls were clipped after resize.",
@@ -414,8 +442,35 @@ try {
       frame.includes("LLM thinking"),
       "Agent activity was clipped after resize.",
     );
+    if (frame.includes("AGENT ACTIVITY"))
+      assert.ok(
+        frame.includes("THINK") &&
+          frame.includes("Inspecting the target network"),
+        "Live reasoning was clipped after resize.",
+      );
     assert.match(frame, /TPS 13\.8/);
   }
+  currentRunner!.pause();
+  await until(() => frameIncludes("PAUSED"), "Paused state was not rendered.");
+  const paused = await capture("native-paused");
+  assert.match(paused, /\/retry/);
+  assert.match(paused, /game clock still running/);
+  // Like /start above, dispatch through the real native session. This fixture
+  // initializes InteractiveMode but does not run its blocking input loop.
+  await runtime.session.prompt("/retry");
+  await until(
+    () => resumes === 1,
+    "Native /retry did not resume the active runner.",
+  );
+  assert.equal(starts, 1, "Recovery must not start another attempt.");
+  await until(
+    () => frameIncludes("RUNNING"),
+    "Resumed phase was not rendered.",
+  );
+  assert.doesNotMatch(
+    await capture("native-resumed"),
+    /Extension command.*conflicts/,
+  );
   await runtime.session.prompt("/stop");
   await until(
     () => frameIncludes("CANCELLED"),
@@ -437,7 +492,7 @@ try {
   // /start is backed exclusively by FakeRunner here. Never invoke real runner or /test.
   assert.equal(runtime.session.sessionFile, undefined);
   console.log(
-    "PASS: real native pi viewport + top-anchored deck + one environment summary + native /config L0/L1/text/image + masked /login + resolving non-error model guidance + native model picker/high thinking + preserved real errors + background fake /start/stop + resize 55–200 columns / up to 70 rows. HTML/text previews: runtime/ui-preview/. No real API/game.",
+    "PASS: real native pi viewport + top-anchored deck + one environment summary + native /config L0/L1/text/image + masked /login + resolving non-error model guidance + native model picker/high thinking + preserved real errors + background fake /start/stop + API pause/native /retry with same run + resize 55–200 columns / up to 70 rows. HTML/text previews: runtime/ui-preview/. No real API/game.",
   );
 } catch (error) {
   await capture("native-smoke-failed").catch(() => undefined);

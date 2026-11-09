@@ -27,6 +27,10 @@ test("config argument completion exposes only non-secret benchmark fields and fu
     ["gameWindowWidth", "gameWindowHeight"],
   );
   assert.deepEqual(
+    configCompletions("skipIntro t")!.map((item) => item.value),
+    ["skipIntro true"],
+  );
+  assert.deepEqual(
     configCompletions("gameFullscreen t")!.map((item) => item.value),
     ["gameFullscreen true"],
   );
@@ -71,6 +75,11 @@ test("benchmark field validation preserves other config, supports auto paths and
   assert.equal(config.gameWindowWidth, 1920);
   assert.equal(config.gameWindowHeight, 1080);
   assert.equal(config.gameFullscreen, false);
+  assert.equal(config.skipIntro, false);
+  assert.equal(
+    changeSetting(config, benchSetting("skipIntro"), "TRUE").skipIntro,
+    true,
+  );
   const sized = changeSetting(config, benchSetting("gameWindowWidth"), "1280");
   assert.equal(sized.gameWindowWidth, 1280);
   assert.equal(sized.gameWindowHeight, 1080);
@@ -92,6 +101,7 @@ test("benchmark field validation preserves other config, supports auto paths and
     ["gameWindowHeight", "479"],
     ["gameWindowHeight", "4097"],
     ["gameFullscreen", "yes"],
+    ["skipIntro", "yes"],
   ]) {
     assert.throws(
       () => changeSetting(config, benchSetting(key!), value!),

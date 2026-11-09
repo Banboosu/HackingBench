@@ -6,11 +6,11 @@
 
 ## 0. 先看三个对设计影响最大的现场发现
 
-| #   | 发现                                                                                                                                                                                                                                                                                                                                                                                          | 影响                                                                                                                                                  |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | ✅ 你的 Hacknet 是**原版 Steam 安装**(`D:\Game\SteamLibrary\steamapps\common\Hacknet`),**没有** BepInEx / Pathfinder / HNPF bridge;且**调研时游戏正在运行**(PID 25572，仅历史快照)。HNPF 的默认 `HNPF_GAME=D:\Game\Hacknet+DLC+Pathfinder\Hacknet.exe` 不存在                                                                                                                                 | benchmark **必须用一份独立拷贝** `runtime/game/`,永不触碰 Steam 那份。自己按 PID 启停,**绝不** `taskkill /IM Hacknet.exe`                             |
-| 2   | ✅ HNPF-MCP 的 64 个工具里有大量"作弊/越权"能力:`get_computer` 直接返回用户密码和 `firewall.solution`;`open_port` / `take_admin` / `solve_firewall` / `set_flag` / `run_action` / `write_file`;`launch_game` 会 spawn powershell,默认还带 `-enabledebug -enablefc`;`game_log_tail` 可读宿主文件;`save_game` 写宿主目录;其进程检测按**进程名** `Hacknet.exe`(会把你正在玩的那份当成"已在运行") | LLM **绝不能**直接看到 HNPF 原生 MCP 工具集。agent 侧用**自己的窄工具**,HNPF 只作为 in-game bridge(C# 插件 + 命名管道)复用                            |
-| 3   | ✅ `~/.pi/agent/settings.json` 全局加载了 `npm:pi-web-access`(模型可联网搜攻略)和 `pi-provider`;该目录还有 `auth.json`、`relays.json`。✅ bridge 的 `AllowedCommands` **只校验第一个空格前的 token**(`parts[0]`);❓ 不确定 `os.runCommand` 是否支持 `&&`/换行串联                                                                                                                             | bench 里的 pi 必须跑在**隔离的 `PI_CODING_AGENT_DIR`** + `--no-extensions`;命令白名单必须在我们自己的工具层**先做一遍**(含元字符拒绝),不能只靠 bridge |
+| #   | 发现                                                                                                                                                                                                                                                                                                                                                                                          | 影响                                                                                                                                                       |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | ✅ 你的 Hacknet 是**原版 Steam 安装**(`D:\Game\SteamLibrary\steamapps\common\Hacknet`),**没有** BepInEx / Pathfinder / HNPF bridge;且**调研时游戏正在运行**(PID 25572，仅历史快照)。HNPF 的默认 `HNPF_GAME=D:\Game\Hacknet+DLC+Pathfinder\Hacknet.exe` 不存在                                                                                                                                 | benchmark **必须用一份独立拷贝** `runtime/game/`,永不触碰 Steam 那份。自己按 PID 启停,**绝不** `taskkill /IM Hacknet.exe`                                  |
+| 2   | ✅ HNPF-MCP 的 64 个工具里有大量"作弊/越权"能力:`get_computer` 直接返回用户密码和 `firewall.solution`;`open_port` / `take_admin` / `solve_firewall` / `set_flag` / `run_action` / `write_file`;`launch_game` 会 spawn powershell,默认还带 `-enabledebug -enablefc`;`game_log_tail` 可读宿主文件;`save_game` 写宿主目录;其进程检测按**进程名** `Hacknet.exe`(会把你正在玩的那份当成"已在运行") | LLM **绝不能**直接看到 HNPF 原生 MCP 工具集。agent 侧用**自己的窄工具**,HNPF 只作为 in-game bridge(C# 插件 + 命名管道)复用                                 |
+| 3   | ✅ `~/.pi/agent/settings.json` 全局加载了 `npm:pi-web-access`(模型可联网搜攻略)和 `pi-provider`;该目录还有 `auth.json`、`relays.json`。✅ bridge 的 `AllowedCommands` **只校验第一个空格前的 token**(`parts[0]`);❓ 不确定 `os.runCommand` 是否支持 `&&`/换行串联                                                                                                                             | bench 里的 pi 必须跑在**隔离的 `PI_CODING_AGENT_DIR`** + `--no-extensions`;命令边界/黑名单必须在我们自己的工具层**先做一遍**(含元字符拒绝),不能只靠 bridge |
 
 另外:✅ 你是在 **Windows Terminal → PowerShell 7 → Windows 原生 pi 1.5** 中运行;只有当前 `bash` 工具子进程经 `C:\Windows\System32\bash.exe` 进入 WSL Ubuntu。已通过 Windows 进程父子链确认,并非 pi 本身运行在 WSL。原因是未配置 `shellPath`,Git Bash 安装在 Scoop 自定义目录,不在 pi 优先探测的两个默认安装目录中,于是回退到 PATH 上的旧版 WSL `bash.exe` 启动器。**benchmark 不依赖 WSL**,按后续指示改为使用 Windows 原生 Bun 直接连接 Hacknet 的命名管道 `\\.\pipe\…`,启动时检查 Bun 版本及 `process.platform === "win32"`;不根据开发工具的 Bash 环境推断应用运行环境。
 
@@ -31,7 +31,7 @@
 ```
 ┌─ bench CLI(TS, Windows Bun, 特权) ───────────────────────────────┐
 │ ModelMatrix  读 models.json → 选模型 → preflight(1 次 chat ping)    │
-│ GameManager  复制干净游戏 → 写 bridge cfg(随机 Token/白名单/管道名)  │
+│ GameManager  复制干净游戏 → 写 bridge cfg(随机 Token/命令黑名单/管道名)  │
 │              → 按 PID 启动 → 等 bridge → 读档进场景 → 结束按 PID 杀   │
 │ TaskRunner   (model × task × repeat) 循环,断点续跑                  │
 │ Scorer       特权 bridge 客户端:任务/Flag/文件/管理员/事件 → 判分    │
@@ -63,17 +63,17 @@
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | L0 模型无任何代码执行路径 | pi 子进程参数:`--tools "hn_*"`(显式白名单,**无** read/write/edit/bash/powershell)、`--no-mcp`、`--no-extensions -e extension/hacknet-player.ts`、`--no-skills --no-prompt-templates --no-themes --no-context-files`、`--no-approve`(不加载项目 `.pi`)、cwd=空的 run 目录。env:`PI_CODING_AGENT_DIR=runtime/pi-agent`(隔离,**不含**你的 auth.json / pi-web-access / relays.json)、`PI_TELEMETRY=0`、`PI_SKIP_VERSION_CHECK=1` |
 | L0.5 工具集断言           | 扩展在 `session_start` / `before_agent_start` 调 `pi.setActiveTools(allowlist)`;`tool_call` 钩子对白名单外工具一律 `block`;启动后若发现活跃工具 ⊄ 白名单 → 该 run 记 `infra_error` 并中止                                                                                                                                                                                                                                    |
-| L1 命令校验(自己的工具层) | `hn_cmd`:**首 token 白名单**(原版玩家命令 + 本机 /bin 里的 exe 名,最终清单在 M0 从游戏 `help`/`exe` 输出导出)、**拒绝** `& \| ; \` $ ( ) < > \n \r`、长度 ≤200、拒绝盘符/UNC 路径、**明确禁止** `mcp / loadmission / loadactions / dscan / debug\* / sudo / execute / fastHack / revealAll`;速率限制                                                                                                                         |
-| L2 bridge 自带 Safety     | 写入游戏拷贝的 cfg:`AllowedCommands=<同一份清单>`、`AutoToken` 每 run 由 bench 生成随机 Token、管道名 `hnpf-bench-<runId>`(不与你正在玩的实例冲突)。注:`ReadOnly=true` 会连 `execute_command` 一起拦,所以不能用                                                                                                                                                                                                              |
+| L1 命令校验(自己的工具层) | `hn_cmd`:**所有游戏内 exe 可运行**;只拦截调试/作弊首 token（`mcp / loadmission / loadactions / dscan / debug / sudo / execute / fastHack / revealAll / flag 写入 / takeAdmin`）、**拒绝** `& \| ; \` $ ( ) < > \n \r`、长度 ≤256、拒绝盘符/UNC/`..` 路径;速率限制                                                                                                                                                            |
+| L2 bridge 自带 Safety     | 写入游戏拷贝的 cfg:`AllowedCommands=`（空=不限制 exe）、`BlockedCommands=<调试/作弊黑名单>`、`AutoToken` 每 run 由 bench 生成随机 Token、管道名 `hnpf-bench-<runId>`(不与你正在玩的实例冲突)。注:`ReadOnly=true` 会连 `execute_command` 一起拦,所以不能用                                                                                                                                                                    |
 | L3 游戏拷贝               | 独立目录 `runtime/game/`;启动**不带** `-enabledebug -enablefc`;存档/Documents 写入范围在 M0 确认(Pathfinder 存 `Documents\My Games\HacknetPathfinder\`,与你原版存档的 `My Games\Hacknet` 分开);每 run 前从模板目录恢复                                                                                                                                                                                                       |
 | L4 进程卫生               | 只按自己 spawn 的 PID 终止,Windows 下 `taskkill /PID <pid> /T /F`;启动前检查 `runtime/` 外是否有同名管道;**永不**按进程名杀                                                                                                                                                                                                                                                                                                  |
 | L5 网络                   | pi 子进程只需要访问你选定的 LLM endpoint。提供可选 `scripts/harden-firewall.ps1`(**需你自己以管理员运行,我不会替你提权**),给 `runtime/game/Hacknet.exe` 加出站拒绝规则                                                                                                                                                                                                                                                       |
 | L6 密钥                   | `runtime/` 与 `.env` 进 `.gitignore`;`bench models sync` 只把**选中**的 provider 导出到隔离 `models.json`(限 ACL;或改成 `$ENV_VAR` 引用,见决策点 7);日志写盘前正则脱敏 `sk-…`/Bearer;模型看不到 env(无 shell)                                                                                                                                                                                                                |
 | L7 可选的更强隔离         | Tier B:整套(游戏+pi+orchestrator)放进 Windows Sandbox / Hyper-V VM,仅放行 LLM API 出站。pi 官方 `security.md` 也认为整进程隔离是最强方案。v1 不做,先留接口                                                                                                                                                                                                                                                                   |
 
-**M0 安全 spike(必做,先于一切)**:对 L1 白名单做对抗测试——`ls&&…`、换行、Unicode 空白、超长、大小写、`exe` 名带路径、`scp`/`upload` 路径穿越、`mcp exec`、login 提示态下的输入 —— 确认没有任何一条能离开游戏虚拟文件系统/触达宿主。
+**M0 安全 spike(必做,先于一切)**:对 L1 命令边界做对抗测试——`ls&&…`、换行、Unicode 空白、超长、大小写、`exe` 名带路径、`scp`/`upload` 路径穿越、`mcp exec`、login 提示态下的输入 —— 确认没有任何一条能离开游戏虚拟文件系统/触达宿主。
 
-残余风险(诚实说明):模型没有 shell,只有一个受限的游戏终端;剩下的攻击面是 bridge/Pathfinder 本身的 bug,以及白名单实现缺陷——所以 spike 才排在第一位。
+残余风险(诚实说明):模型没有 shell,只有一个受限的游戏终端;剩下的攻击面是 bridge/Pathfinder 本身的 bug,以及命令边界实现缺陷——所以 spike 才排在第一位。
 
 ---
 
@@ -98,14 +98,15 @@
 
 ## 5. agent 工具设计(公平性:只给玩家屏幕上看得到的)
 
-| 工具                  | 说明                                                                                 |
-| --------------------- | ------------------------------------------------------------------------------------ |
-| `hn_cmd(cmd)`         | 执行一条白名单终端命令,等待输出稳定,返回**新增终端行**(截断 ≤4KB)                    |
-| `hn_screen()`         | 当前连接节点/目录、RAM、进程(ps)、**已发现**的网络地图(无密码/Flag/防火墙答案)       |
-| `hn_mail(action,id?)` | 邮件列表/正文(游戏 UI 本来就能看)                                                    |
-| `hn_input(text)`      | ❓ 终端处于提示态(如 `login`)时的输入;依赖 spike 确认 `os.runCommand` 在提示态的行为 |
-| `hn_wait(seconds)`    | 让游戏时间流逝(上限 30s),只记录耗时                                                  |
-| `hn_give_up(reason)`  | 允许模型显式放弃(区分 gave_up 与 timeout)                                            |
+| 工具                  | 说明                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `hn_cmd(cmd)`         | 执行一条游戏终端命令(调试/作弊命令除外),等待输出稳定,返回**新增终端行**(截断 ≤4KB)    |
+| `hn_shell(action)`    | 驱动已打开的 shell:对当前连接目标代理 overload/cancel/exit(游戏内 Shell 窗口等价操作) |
+| `hn_screen()`         | 当前连接节点/目录、RAM、进程(ps)、**已发现**的网络地图(无密码/Flag/防火墙答案)        |
+| `hn_mail(action,id?)` | 邮件列表/正文(游戏 UI 本来就能看)                                                     |
+| `hn_input(text)`      | ❓ 终端处于提示态(如 `login`)时的输入;依赖 spike 确认 `os.runCommand` 在提示态的行为  |
+| `hn_wait(seconds)`    | 让游戏时间流逝(上限 30s),只记录耗时                                                   |
+| `hn_give_up(reason)`  | 允许模型显式放弃(区分 gave_up 与 timeout)                                             |
 
 系统提示词按**知识档位**做成可对比维度:L0 = 只给目标,靠游戏内 `help` 自学;L1 = 附 `HN命令速查.md` 精简版(含"scp 方向相反/exe 是列表"等坑)。默认 L1。
 
@@ -288,4 +289,29 @@ ok
 - 新增 `/config`，通过 pi 原生 select/input 菜单恢复知识、文字/文字+图像观测、游戏窗口、上下文/输出限制、游戏来源和 pi.exe 路径；支持 `/config knowledge L0`、`/config observation text+image` 等直接修改与参数补全。接受后立即保存非敏感配置，Esc 取消当前项/退出菜单。预算字段和 `/bench` 已移除，运行不因计数停止。
 - 菜单、反馈明确 next run；任务活跃时拒绝修改，弹窗返回后再次检查。已完成面板保留旧配置快照，下一 run 使用新配置。不覆盖原生 `/settings`、`/login`、`/model`、`/thinking`，不恢复旧 keyEnv/会话密钥 UI 或第二套 renderer。
 - text+image 明示需要视觉模型，只增加既有游戏 framebuffer 工具；L0/L1 只控制额外命令速查。新增测试验证四种组合的实际 jail prompt、图像输入声明、环境开关与准确工具名单，而非只检查界面文字。
-- TypeScript + **102 个测试**、原生 TUI smoke 与 Pi RPC smoke 通过；TUI 验证设置菜单、原生枚举选择、原生参数补全及 55×20 设置菜单。没有真实 API/key、游戏启动或真实战役，smoke 不改用户 bench 配置。
+- TypeScript + **117 个测试**、原生 TUI smoke 与 Pi RPC smoke 通过；TUI 验证设置菜单、原生枚举选择、原生参数补全及 55×20 设置菜单。没有真实 API/key、游戏启动或真实战役，smoke 不改用户 bench 配置。
+
+## 15. shell 过载实效修复与可选跳过 intro
+
+- 从用户最新真实 run 的脱敏日志重现：`hn_shell overload/cancel/exit` 均返回 ok，但没有执行动作。原生 `ShellOverloaderExe.RunShellOverloaderExe` 读取 argv[1] 的 flag；旧适配器只传 `{ flag }`，游戏只打印参数不足。bench 现在传 `{ "ConShell", flag }`，无活动 shell 时明确报错；不修改游戏代理状态或直接写任务 Flag。
+- 玩家观测补充每个活动 shell 的 PID、hostIP、state、targetIP。proxy 读取真实 `proxyOverloadTicks`，不再读取不存在的 proxyTime/proxyOverloadRemainingTime。文档明确三个动作作用于全部活动 shell。
+- 新增 `/config skipIntro true|false`，默认 false，支持原生菜单/参数补全/配置持久化。`GameSession` 显式传递开局选项；不改用户已有配置，不新增玩家工具。
+- intro 不等于教程：开启时把开场剧情 `IntroTextModule` 标为播放完毕，并仅在第一次 `Programs.firstTimeInit` 的线程范围内移除打字/闪屏的 presentation Sleep（异常时也恢复线程状态）。不打开 debug，不改游戏时间、破解器计时或后续重启；保留原生初始化。教程就绪后仅发送一次正常 `kill PID`，由原教程退出逻辑恢复 UI 并发送第一封邮件，不直接写 Flag、LoadMission 或跳后续任务。
+- `skipIntro` 写入 run 结果与快照，报告按开场模式分组；历史未标记结果按完整开场。隔离玩家 prompt 提示从 inbox 开始，工具权限不变；面板显示 skip intro。
+- 验证：TypeScript + **119 个测试**、TUI/RPC smoke、setup 均通过。真实游戏 smoke 分别运行 `skipIntro=false/true`，均在本机 admin 测试节点通过正常 `shell` 开启程序，验证过载进度从30下降到0且 proxyActive=false、cancel 重置、exit 移除；开启模式另验证剧情 skip 日志、移除224个表现性 Sleep、无教程、首封邮件可读且 judge 未成功。未调用真实模型、未验证完整战役；个人 Hacknet/Pathfinder 存档指纹不变。
+
+## 16. 终端有输出却被判为 No new terminal line 的根因修复
+
+- 最新真实 run 中 `ls`、`ls bin` 等已在屏幕出现输出，但返回 lines=[]，terminal.total 长期固定29。Cecil 检查确认 Pathfinder 后的 `Terminal.history` 为 Public；原反射只查 NonPublic，始终退回原版最近29行字符串接口。修正为同时检查 Public/NonPublic，恢复完整历史计数与最新 N 行。
+- `Player.cmd` 不再只按 total 增长判定输出/稳定，而是比较行内容；按完整历史位置取增量，兼容固定大小滚动窗口与已有行原地追加。清屏后继续收集输出；最后的 screen 读取若发现新输出，会提升到主 lines，不再错误附加无输出提示。确实无变化时返回明确标记 output=snapshot 的当前终端上下文与状态。
+- 新增纯终端差分测试及玩家集成回归：超过30行/窗口截断、total恒29、已有行追加、多批延迟输出、清屏、最终screen竞态、无变化、取消；TypeScript + **132 个测试**通过。
+- `scripts/check-terminal-history.ps1` 在独立工具进程中加载临时游戏程序集夹具，只移除复制品的 BepInEx module initializer，避免启动游戏或访问现有配置。旧部署 DLL 对100行返回29/29（确定复现），候选 DLL 对100行/最新15行/原地更新/清屏全部通过。未修改 Steam 或运行中的程序集。
+- 等用户 active run 自行结束后 setup 部署，再通过真实 `smoke:game --skip-intro`：历史超过30行后连续三次 ls 均返回目录增量，完整历史total达到73；shell过载/intro/隔离存档回归仍通过。此前只在历史未满时检查help，未覆盖根因，现已增加超过30行的强断言。
+
+## 17. API 失败后的保活暂停与手动继续
+
+- 用户 run 在33分钟后 provider connection error 连续3次（含pi原生2次重试）导致infra_error；希望类似错误暂停后能继续。读取固定pi 1.5的RPC/event文档与示例，确认只在agent_settled边界暂停，不能在agent_end（仍可能自动重试）触发。
+- 新增纯状态机 ProviderRecovery：模型/provider/压缩请求错误在settled后进入PAUSED，保留游戏、pi内存会话、管道、run锁、配置快照和统计，不完成run。控制面 `/retry` 在同一会话发送一次续接提示，要求先hn_screen、不要盲目重放旧工具；并发调用互斥，再次出错可以重复手动恢复，无累计次数硬限制。pi原生 `/resume` 已占用，真实TUI smoke发现冲突后改用 `/retry`，没有覆盖原生历史会话入口。
+- 只有模型/provider错误可保活；游戏/桥接/pi子进程/扩展故障和RPC超时仍fatal，尤其prompt超时不能确定是否已接受，不自动重发。开局前preflight不适用。状态机停止后拒绝继续；暂停与恢复写入脱敏events，providerPauses/providerPauseMs记入最终结果。暂停时游戏/追踪/墙钟继续，judge和本地session stats仍运行；不改变预算或评分规则。
+- 原生面板显示PAUSED、/retry与游戏时钟提醒，后台task仍占用，拒绝重复/start或热改配置；/stop/退出照常清理。Headless stdin支持/retry和/stop。尚不支持进程退出后的磁盘恢复，旧的已结束INFRA_ERROR不能因此继续；同一会话凭据/模型不热替换。
+- 验证TypeScript + **140个测试**；覆盖暂停不发请求、时长累计、并发恢复、100次人工恢复无配额、恢复ack前再失败、停止后拒绝恢复、prompt RPC超时不重放、原生UI同一attempt继续。真实pi RPC + 本地假模型连续503耗尽原生重试后暂停，恢复前后sessionId相同且旧工具结果保留、工具调用数不增加；真实InteractiveMode + 假runner验证PAUSED、/retry以及无原生命令冲突。TUI/RPC smoke均通过，无真实模型调用或游戏启动。

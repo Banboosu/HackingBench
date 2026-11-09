@@ -24,6 +24,7 @@ export interface DashboardState {
   action: string;
   observation: string;
   assistant: string;
+  reasoning: string;
   log: string;
   history: DashboardEntry[];
   connection: string;
@@ -55,6 +56,7 @@ export function emptyDashboard(): DashboardState {
     action: "",
     observation: "",
     assistant: "",
+    reasoning: "",
     log: "",
     history: [],
     connection: "",
@@ -223,7 +225,7 @@ function phaseRole(
   return state.phase === "ERROR" ||
     (result && !["success", "cancelled"].includes(result))
     ? "error"
-    : result === "cancelled"
+    : result === "cancelled" || state.phase === "PAUSED"
       ? "warning"
       : state.phase === "IDLE"
         ? "accent"
@@ -264,15 +266,21 @@ function activity(
   p: DashboardPaint,
   frame: number,
 ): string[] {
-  const busy = !["idle", "settled"].includes(state.activity);
+  const paused = state.activity === "paused";
+  const busy = !["idle", "settled", "paused"].includes(state.activity);
   const spinner = busy
     ? ["◜", "◠", "◝", "◞", "◡", "◟"][Math.abs(frame) % 6]
     : "○";
   const speaking =
     state.activity === "thinking" || state.activity === "responding";
+  const reasoning = !!state.reasoning;
   const voice = wrapTextWithAnsi(
     displayText(
-      state.assistant ||
+      (paused
+        ? "Model requests paused. Use /retry to continue. Game time is still running."
+        : "") ||
+        state.reasoning ||
+        state.assistant ||
         (busy
           ? "Waiting for the player agent…"
           : "Agent starts only when you run /start."),
@@ -296,9 +304,12 @@ function activity(
       0.69,
     ),
     ...(state.action ? [p.fg("accent", clip(`› ${state.action}`, width))] : []),
-    ...(state.assistant || busy
+    ...(paused || reasoning || state.assistant || busy
       ? voice.map((line, i) =>
-          p.fg("muted", `${i ? "        " : "AGENT   "}${line}`),
+          p.fg(
+            "muted",
+            `${i ? "        " : paused ? "PAUSED  " : reasoning ? "THINK   " : "AGENT   "}${line}`,
+          ),
         )
       : []),
   ];
@@ -414,7 +425,9 @@ function operator(
     lines.push(
       "",
       label("EXPERIMENT /config"),
-      value(`${config.knowledge} · ${config.observation}`),
+      value(
+        `${config.knowledge} · ${config.observation}${config.skipIntro ? " · skip intro" : ""}`,
+      ),
     );
   if (height >= 21 && state.environment)
     lines.push(
@@ -446,19 +459,7 @@ function telemetry(
     const size = i === 2 ? inner - col * 2 : col;
     return fit(p.fg("dim", label) + "  " + p.fg("text", text), size);
   });
-  return panel(
-    "RUN TELEMETRY // live totals · no hard limits",
-    [
-      cells.join(""),
-      p.fg(
-        "muted",
-        `LLM ${(number(state.llmMs) / 1000).toFixed(1)}s · TOOL ${(number(state.toolMs) / 1000).toFixed(1)}s · ${tpsLabel(state)}`,
-      ),
-    ],
-    width,
-    4,
-    p,
-  );
+  return panel("RUN TELEMETRY", [cells.join("")], width, 3, p);
 }
 function statusLines(
   state: DashboardState,
@@ -555,13 +556,14 @@ export function dashboardLines(
     lines = compact(state, demo, inner, height, p, frame);
   else {
     const notice = statusLines(state, inner, p);
-    const bodyHeight = height - 7 - notice.length;
+    const bodyHeight = height - 6 - notice.length;
     const leftWidth = Math.max(26, Math.min(32, Math.floor(inner * 0.26)));
     const rightWidth = inner - leftWidth - 1;
     const activityHeight =
       !state.action &&
       !state.assistant &&
-      ["idle", "settled"].includes(state.activity)
+      !state.reasoning &&
+      ["idle", "settled", "paused"].includes(state.activity)
         ? 3
         : 6;
     const left = panel(
@@ -611,9 +613,9 @@ export function dashboardLines(
 export function deckFooter(width: number, p: DashboardPaint = plain): string[] {
   const commands =
     width >= 92
-      ? "/start  /stop   /config  /provider  /login  /model  /thinking   /test   /quit"
+      ? "/start  /retry  /stop   /config  /provider  /login  /model  /thinking   /test   /quit"
       : width >= 55
-        ? "/start  /stop  /config  /login  /model  /quit"
-        : "/start  /stop  /config  /quit";
+        ? "/start  /retry  /stop  /config  /login  /model  /quit"
+        : "/start  /retry  /stop  /config  /quit";
   return [p.fg("accent", clip(` ${commands}`, width))];
 }

@@ -21,6 +21,7 @@ export function summarizeResults(results: RunResult[]): string {
       r.thinking ?? "unknown",
       r.knowledge,
       r.observation,
+      r.skipIntro ?? false,
       r.goal,
       r.provenance,
     ]);
@@ -31,9 +32,9 @@ export function summarizeResults(results: RunResult[]): string {
   const lines = [
     "# HackingBench results",
     "",
-    "Early adapter results, not a validated leaderboard. Infra errors, cancellations and legacy budget-stopped records are excluded from pass rate. Different goals, thinking levels, observations and adapter provenance are grouped separately. Wall time, tool calls and tokens are recorded as statistics, not enforced quotas.",
+    "Early adapter results, not a validated leaderboard. Infra errors, cancellations and legacy budget-stopped records are excluded from pass rate. Different goals, thinking levels, observations, intro settings and adapter provenance are grouped separately. Wall time, tool calls and tokens are recorded as statistics, not enforced quotas.",
     "",
-    "| Endpoint / API / model / thinking / knowledge / observation / goal / adapter | Attempts | Pass rate | Infra errors | Best success (s) |",
+    "| Endpoint / API / model / thinking / knowledge / observation / intro / goal / adapter | Attempts | Pass rate | Infra errors | Best success (s) |",
     "|---|---:|---:|---:|---:|",
   ];
   for (const runs of groups.values()) {
@@ -45,6 +46,7 @@ export function summarizeResults(results: RunResult[]): string {
       r.thinking ?? "unknown",
       r.knowledge,
       r.observation,
+      r.skipIntro ? "skip-intro" : "full-intro",
       r.goal,
       r.provenance?.adapter.slice(0, 12) ?? "unknown",
     ]

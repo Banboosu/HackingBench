@@ -1,74 +1,34 @@
 import path from "node:path";
 import { lstat, realpath } from "node:fs/promises";
 
-// Static reviewed player commands. Unknown executables are NOT enabled dynamically.
-export const COMMANDS = [
-  "help",
-  "man",
-  "connect",
-  "dc",
-  "disconnect",
-  "scan",
-  "probe",
-  "ls",
-  "cd",
-  "cat",
-  "scp",
-  "rm",
-  "mv",
-  "ps",
-  "kill",
-  "exe",
-  "clear",
-  "login",
-  "upload",
-  "download",
-  "reboot",
-  "shell",
-  "analyze",
-  "solve",
-  "porthack",
-  "notes",
-  "theme",
+// All in-game executables are available. Only commands that would bypass the
+// game's normal UI/rules are blocked. This is not a host-command allowlist:
+// hn_cmd sends one validated line to the game terminal, never to a host shell.
+export const BLOCKED_COMMANDS = [
+  "mcp",
+  "loadmission",
+  "loadactions",
+  "dscan",
+  "debug",
+  "sudo",
+  "execute",
   "quit",
-  "SSHcrack",
-  "FTPBounce",
-  "SMTPoverflow",
-  "WebServerWorm",
-  "SQL_MemCorrupt",
-  "HexClock",
-  "SSHcrack.exe",
-  "FTPBounce.exe",
-  "SMTPoverflow.exe",
-  "WebServerWorm.exe",
-  "SQL_MemCorrupt.exe",
-  "SSHCrack.exe",
-  "Decypher",
-  "Decypher.exe",
-  "DECHead",
-  "DECHead.exe",
-  "TraceKill",
-  "TraceKill.exe",
-  "Clock",
-  "Clock.exe",
-  "MemForensics",
-  "MemForensics.exe",
-  "MemDumpGenerator",
-  "MemDumpGenerator.exe",
-  "SignalScramble",
-  "SignalScramble.exe",
-  "ComShell",
-  "ComShell.exe",
-  "PortHack",
-  "PortHack.exe",
-  "NetmapOrganizer",
-  "NetmapOrganizer.exe",
-];
-const allowed = new Set(
-  COMMANDS.map((s) => s.toLowerCase()).filter((s) => s !== "quit"),
-);
+  "fasthack",
+  "revealall",
+  "getstring",
+  "setflag",
+  "clearflag",
+  "set_flag",
+  "clear_flag",
+  "addflag",
+  "removeflag",
+  "takeadmin",
+  "take_admin",
+] as const;
+const blocked = new Set<string>(BLOCKED_COMMANDS);
 export const PLAYER_TOOLS = [
   "hn_cmd",
+  "hn_shell",
   "hn_screen",
   "hn_wait",
   "hn_input",
@@ -93,8 +53,13 @@ export function validateCommand(input: unknown): string {
     throw new Error("Parent-directory traversal is forbidden.");
   const cmd = input.trim();
   const first = cmd.split(" ")[0]!.toLowerCase();
-  if (!allowed.has(first))
-    throw new Error(`Command is not in the player allowlist: ${first}`);
+  // Commands are bare names. Reject path-shaped first tokens so a debug/cheat
+  // name cannot be smuggled in as ./mcp or /bin/loadmission.
+  if (/[\\/]/.test(first))
+    throw new Error("Command names must be bare game commands or executables.");
+  const base = first.endsWith(".exe") ? first.slice(0, -4) : first;
+  if (blocked.has(first) || blocked.has(base))
+    throw new Error(`Command is blocked by the game safety policy: ${first}`);
   return cmd;
 }
 

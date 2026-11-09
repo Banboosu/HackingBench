@@ -12,6 +12,8 @@ import { JsonLines } from "../src/core/jsonl.js";
 import { OutputThroughput } from "../src/core/throughput.js";
 import { PLAYER_TOOLS } from "../src/core/safety.js";
 import { testProvider } from "../src/provider.js";
+import { ProviderRecovery, RESUME_PROMPT } from "../src/core/recovery.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 // Actual pi 1.5 RPC process + fake local model + fake local game. No game/real API/key needed.
 const pi = await findExecutable("pi");
@@ -19,9 +21,12 @@ if (!pi) throw new Error("pi.exe/ pi not found on PATH.");
 const seenTools: string[][] = [];
 let assertions: Error | undefined;
 let holdModel = false;
+let failModel = false;
+let modelRequests = 0;
 let onHeldRequest: (() => void) | undefined;
 const model = http.createServer(async (req, res) => {
   try {
+    modelRequests++;
     let body = "";
     for await (const b of req) body += b;
     const payload = JSON.parse(body);
@@ -31,6 +36,18 @@ const model = http.createServer(async (req, res) => {
       "high",
       "Thinking high must be sent on the wire, not just displayed.",
     );
+    if (failModel) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: {
+            message: "temporary outage (fake provider)",
+            type: "server_error",
+          },
+        }),
+      );
+      return;
+    }
     if (holdModel) {
       onHeldRequest?.();
       return;
@@ -219,6 +236,99 @@ try {
   for (const names of seenTools.filter((n) => n.length))
     assert.deepEqual([...names].sort(), [...PLAYER_TOOLS].sort());
   if (assertions) throw assertions;
+
+  // The real pi process must remain usable after its native retry budget is
+  // exhausted. Keep its session/tool results, pause requests, then resume once.
+  const sessionBefore = await rpc.request("get_state");
+  let providerError = "";
+  let pauseEvents = 0;
+  let resumeEvents = 0;
+  let fatal: Error | undefined;
+  const recovery = new ProviderRecovery({
+    restart: async () => {
+      providerError = "";
+      const accepted = await rpc.request("prompt", { message: RESUME_PROMPT });
+      assert.equal(accepted.disposition, "started");
+    },
+    paused: () => {
+      pauseEvents++;
+    },
+    resumed: () => {
+      resumeEvents++;
+    },
+    fatal: (error) => {
+      fatal = error;
+    },
+  });
+  const recoveryListener = (event: any) => {
+    if (event.type === "message_end" && event.message?.role === "assistant")
+      providerError =
+        event.message.stopReason === "error" ? event.message.errorMessage : "";
+    if (event.type === "agent_settled") recovery.settled(providerError);
+  };
+  const nextSettled = () =>
+    new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        rpc.off("record", listener);
+        reject(new Error("Recovery smoke did not reach agent_settled."));
+      }, 30000);
+      const listener = (event: any) => {
+        if (event.type !== "agent_settled") return;
+        clearTimeout(timeout);
+        rpc.off("record", listener);
+        resolve();
+      };
+      rpc.on("record", listener);
+    });
+  rpc.on("record", recoveryListener);
+  try {
+    failModel = true;
+    const failed = nextSettled();
+    await rpc.request("prompt", {
+      message: "Exercise transient provider outage recovery.",
+    });
+    await failed;
+    assert.equal(recovery.paused, true);
+    assert.equal(pauseEvents, 1);
+    assert.equal((await rpc.request("get_state")).isStreaming, false);
+    const pausedRequests = modelRequests;
+    await delay(150);
+    assert.equal(
+      modelRequests,
+      pausedRequests,
+      "Paused sessions must not issue model requests.",
+    );
+    failModel = false;
+    const resumed = nextSettled();
+    await recovery.resume();
+    await resumed;
+    assert.equal(recovery.paused, false);
+    assert.equal(resumeEvents, 1);
+    assert.equal(fatal, undefined);
+    assert.equal(
+      (await rpc.request("get_state")).sessionId,
+      sessionBefore.sessionId,
+    );
+    const retained = await rpc.request("get_messages");
+    assert.ok(
+      retained.messages.some(
+        (m: any) => m.role === "toolResult" && m.toolCallId === "screen-1",
+      ),
+    );
+    assert.equal(
+      screenCalls,
+      1,
+      "Completed tool calls must not be replayed on resume.",
+    );
+    assert.equal(providerError, "");
+    console.log(
+      "RECOVERY: real RPC exhausted 503 retries, paused requests, resumed same session with prior tool results and no tool replay.",
+    );
+  } finally {
+    failModel = false;
+    recovery.close();
+    rpc.off("record", recoveryListener);
+  }
   holdModel = true;
   const controller = new AbortController();
   const held = new Promise<void>((resolve) => {

@@ -88,12 +88,29 @@ export default function hacknetPlayer(pi: ExtensionAPI) {
     label: "Terminal",
     executionMode: "sequential",
     description:
-      "Run ONE allowed Hacknet virtual-terminal command. No shell syntax or host paths. Returns new output, limited to 4 KiB. Executables finish asynchronously; use hn_wait.",
+      "Run ONE Hacknet virtual-terminal command. All in-game exes are available; debug/cheat commands are blocked. No host shell syntax or host paths. Returns changed terminal rows, limited to 4 KiB. Briefly polls row contents until stable, including in-place writes and rolling history; normal commands do not need an extra wait. If nothing changed, output=snapshot labels current terminal context plus fresh game state, not new command output. Long-running executables still use hn_wait.",
     parameters: Type.Object({
       cmd: Type.String({ minLength: 1, maxLength: 256 }),
     }),
     async execute(_id, args, signal) {
       return result(await use((p) => p.cmd(args.cmd, signal)));
+    },
+  });
+  pi.registerTool({
+    name: "hn_shell",
+    label: "Shell overload",
+    executionMode: "sequential",
+    description:
+      "Drive a Hacknet shell already opened on a compromised node. First run `shell` on a node where you have admin access, repeat on other owned nodes as needed, connect to the proxy target, then use overload; actions apply to ALL active shells: cancel stops overloading, exit closes them. hn_screen shows shell count/IPs, each shell's state (0 idle, 1 overloading), targetIP and proxy overloadTicks. Overload is asynchronous: use hn_wait and check that proxyActive becomes false.",
+    parameters: Type.Object({
+      action: Type.Union([
+        Type.Literal("overload"),
+        Type.Literal("cancel"),
+        Type.Literal("exit"),
+      ]),
+    }),
+    async execute(_id, args, signal) {
+      return result(await use((p) => p.shell(args.action, signal)));
     },
   });
   pi.registerTool({

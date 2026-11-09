@@ -32,7 +32,8 @@ test("Hacknet panels preserve native input space and TPS across terminal sizes a
     outputTps: 13.846,
     llmMs: 13000,
     toolMs: 600,
-    assistant: "检查目标网络。 Checking the network.",
+    reasoning: "检查目标网络。 Checking the network.",
+    assistant: "Final answer must not replace the live reasoning view.",
   };
   const theme = createBenchTheme();
   for (const width of [1, 2, 7, 18, 40, 55, 80, 88, 90, 100, 120, 140, 180]) {
@@ -61,11 +62,20 @@ test("Hacknet panels preserve native input space and TPS across terminal sizes a
     "AGENT ACTIVITY",
     "LIVE TERMINAL",
     "RUN TELEMETRY",
+    "THINK",
+    "检查目标网络。 Checking the network.",
     "LLM 13.0s",
     "TOOL 0.6s",
-    "RUN TELEMETRY // live totals · no hard limits",
   ])
     assert.ok(full.includes(title), title);
+  assert.doesNotMatch(full, /live totals|Final answer must not replace/);
+  for (const metric of ["TPS 13.8", "LLM 13.0s", "TOOL 0.6s"])
+    assert.equal(
+      full.split(metric).length - 1,
+      1,
+      `${metric} must be rendered only in AGENT ACTIVITY.`,
+    );
+  assert.equal(full.split("RUN TELEMETRY").length - 1, 1);
   const modal = dashboardLines(state, config, false, 100, {
     rows: 36,
     compact: true,
@@ -407,6 +417,10 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
       starts++;
       this.emit("phase", "RUNNING");
       this.emit("activity", "thinking");
+      this.emit(
+        "reasoning",
+        "Inspecting the target network before probing ports.",
+      );
       this.emit("metrics", {
         wallMs: 1000,
         steps: 3,
@@ -447,6 +461,7 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
     assert.match(mock.notices.at(-1)!, /already active/);
     const frame = mock.widgets.get("bench.dashboard").render(120).join("\n");
     assert.match(frame, /LLM thinking/);
+    assert.match(frame, /THINK\s+Inspecting the target network/);
     assert.match(frame, /TOOLS\s+3/);
     assert.match(frame, /TPS 50\.0/);
     for (const args of ["knowledge L0", "observation text+image", ""]) {
@@ -501,6 +516,77 @@ test("native start returns promptly, denies duplicate starts, and stop/shutdown 
   }
   assert.equal(stops, 4);
 });
+test("native resume keeps the active attempt, displays pause guidance and does not launch a second run", async () => {
+  const mock = mockPi();
+  let starts = 0;
+  let resumes = 0;
+  let finish: (() => void) | undefined;
+  class FakeRunner extends EventEmitter {
+    paused = true;
+    async run() {
+      starts++;
+      this.emit("phase", "PAUSED");
+      this.emit("activity", "paused");
+      this.emit("paused", "Connection error.");
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return {
+        status: "cancelled",
+        runId: "same-attempt",
+        steps: 7,
+        wallMs: 9000,
+      };
+    }
+    async resume() {
+      if (!this.paused) throw new Error("No paused model session.");
+      this.paused = false;
+      resumes++;
+      this.emit("phase", "RUNNING");
+      this.emit("activity", "thinking");
+      this.emit("resumed");
+    }
+    stop() {
+      finish?.();
+    }
+  }
+  await controllerExtension({
+    config: defaults(),
+    demo: true,
+    persist: async () => {},
+    makeRunner: () => new FakeRunner() as unknown as RunController,
+  })(mock.pi);
+  try {
+    await mock.handlers.get("session_start")!({}, mock.ctx);
+    await mock.commands.get("retry").handler("", mock.ctx);
+    assert.match(mock.notices.at(-1)!, /No live paused run/);
+    await mock.commands.get("start").handler("", mock.ctx);
+    await delay(0);
+    const paused = mock.widgets.get("bench.dashboard").render(140).join("\n");
+    assert.match(paused, /PAUSED/);
+    assert.match(paused, /\/retry/);
+    assert.match(paused, /game clock still running/);
+    await mock.commands.get("start").handler("", mock.ctx);
+    assert.match(mock.notices.at(-1)!, /already active/);
+    await mock.commands.get("config").handler("knowledge L0", mock.ctx);
+    assert.match(mock.notices.at(-1)!, /stop before changing/);
+    await mock.commands.get("retry").handler("", mock.ctx);
+    assert.equal(starts, 1);
+    assert.equal(resumes, 1);
+    assert.match(
+      mock.widgets.get("bench.dashboard").render(140).join("\n"),
+      /RUNNING/,
+    );
+    await mock.commands.get("retry").handler("", mock.ctx);
+    assert.match(mock.notices.at(-1)!, /No paused/);
+    await mock.commands.get("stop").handler("", mock.ctx);
+    await mock.commands.get("retry").handler("", mock.ctx);
+    assert.match(mock.notices.at(-1)!, /No live paused run/);
+  } finally {
+    await mock.handlers.get("session_shutdown")!();
+  }
+});
+
 test("native config menu restores knowledge, observation and local paths with immediate non-secret persistence", async () => {
   const mock = mockPi();
   const saved: ReturnType<typeof defaults>[] = [];

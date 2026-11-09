@@ -87,6 +87,33 @@ test("knowledge/observation settings reach the isolated prompt and exact text/im
   }
 });
 
+test("skipIntro tells the isolated player to read mail without adding tools", async () => {
+  const dir = await temporaryDirectory("jail-intro-");
+  try {
+    const jail = await createJail(
+      { ...defaults(), skipIntro: true },
+      dir,
+      "fixture-secret",
+      "fixture-pipe",
+      "fixture-token",
+    );
+    const prompt = jail.args[jail.args.indexOf("--system-prompt") + 1]!;
+    assert.match(prompt, /opening animation delays were skipped/);
+    assert.match(prompt, /Start by reading your inbox/);
+    assert.equal(
+      jail.args[jail.args.indexOf("--tools") + 1],
+      PLAYER_TOOLS.join(","),
+    );
+    assert.equal(
+      jail.env.HACKINGBENCH_SKIP_INTRO,
+      undefined,
+      "Player must not control startup flags.",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("pi-provider import reads only safe model metadata, not credentials or commands", async () => {
   const dir = await temporaryDirectory("catalog-");
   try {

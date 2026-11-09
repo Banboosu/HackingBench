@@ -27,9 +27,7 @@ export class BenchEditor extends CustomEditor {
     if (width < 12) return super.renderTopBorder(width, hiddenLineCount);
     const theme = this.paint();
     const label = truncateToWidth(
-      hiddenLineCount
-        ? ` COMMAND // ↑ ${hiddenLineCount} more `
-        : " COMMAND // native pi ",
+      hiddenLineCount ? ` COMMAND · ↑ ${hiddenLineCount} more ` : " COMMAND ",
       Math.max(1, width - 4),
       "",
     );
