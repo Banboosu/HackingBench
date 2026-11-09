@@ -197,7 +197,7 @@ Demo 的成功只表示预览结束，`demo: true`、`score: 0`，不进入结�
 | `hn_tutorial`   | 只允许当前可见的教程 Continue / Hint 按钮，不能任意推进教程状态                                                                                                              |
 | `hn_mail`       | 只列出/读取当前玩家的 inbox                                                                                                                                                  |
 | `hn_reply`      | 通过原任务目标和 sender 验证提交邮件回复                                                                                                                                     |
-| `hn_hub`        | 当前连接的任务板中可见合同的列出/接受                                                                                                                                        |
+| `hn_hub`        | 当前连接任务板的列出/接受；listing: 板还可 read 正文，区分合同和教育/新闻文章，私有板需正常登录                                                                              |
 | `hn_give_up`    | 结束无法继续的尝试；不能自行宣布成功                                                                                                                                         |
 | `hn_screenshot` | **可选**，只读取游戏 framebuffer，不截图桌面；需要支持图像输入的模型                                                                                                         |
 
@@ -241,22 +241,25 @@ runtime/
 ## 验证
 
 ```powershell
-bun run check                        # TypeScript + 140 个单元/回归测试，无真实 API/游戏
+bun run check                        # TypeScript + 141 个单元/回归测试，无真实 API/游戏
 bun run smoke:tui                    # 原生 pi + ANSI 终端仿真、resize、登录/模型/TPS；生成静态预览
 bun run smoke:pi                     # 真实 pi 1.5 RPC + 本机假模型/假桥接，无真实 API/游戏
 bun run smoke:game                   # 显式启动项目内游戏 GUI，无 LLM/API/正式分数
+bun run smoke:game --skip-intro --campaign # 新战役正常玩法走到 Entropy 接取并完成 Point Clicker，无 LLM/API
+powershell -ExecutionPolicy Bypass -File scripts/check-mission-board.ps1 # 离线核对真实游戏 Accept 分支与适配器 IL
 ```
 
 已在本机验证：
 
-- Windows Bun 1.4.4 下 TypeScript 和 140 个测试通过，包含原防线、原生控制面、密钥遮罩、endpoint 绑定、模型目录安全、响应式面板，以及 TPS 的加权/缺失 usage/取消/失败处理。新增 `/config` 菜单/参数/取消/校验/运行中锁定与配置快照回归，验证四种知识/观测组合确实改变隔离玩家的 prompt、图像输入声明及准确工具名单；游戏窗口宽高/全屏设置包含边界校验、保留其他 Settings.txt 行、幂等写入和禁止越界写入测试。另含预算字段/命令移除、统计只计数不停止、thinking 按 `reasoning` / `thinkingLevelMap` 收敛，以及 `hn_shell` 只驱动游戏内 shell overload、所有游戏内 exe 默认放行且只拦截调试/作弊命令、hn_cmd 自动轮询输出/状态快照的回归。终端回归覆盖超过30行、固定29行滚动窗口、同一行追加、多批/延迟输出、清屏后输出、最后一次屏幕读取竞态与取消；`scripts/check-terminal-history.ps1` 使用临时游戏程序集夹具（仅禁用副本的 BepInEx module initializer，不启动游戏）验证真实 bridge 的100行读取、尾部窗口和原地更新。真实 game smoke 也断言超过30行后连续 `ls` 的主结果包含目录输出，不只检查开局 `help`。
+- Windows Bun 1.4.4 下 TypeScript 和 141 个测试通过，包含原防线、原生控制面、密钥遮罩、endpoint 绑定、模型目录安全、响应式面板，以及 TPS 的加权/缺失 usage/取消/失败处理。新增 `/config` 菜单/参数/取消/校验/运行中锁定与配置快照回归，验证四种知识/观测组合确实改变隔离玩家的 prompt、图像输入声明及准确工具名单；游戏窗口宽高/全屏设置包含边界校验、保留其他 Settings.txt 行、幂等写入和禁止越界写入测试。另含预算字段/命令移除、统计只计数不停止、thinking 按 `reasoning` / `thinkingLevelMap` 收敛，以及 `hn_shell` 只驱动游戏内 shell overload、所有游戏内 exe 默认放行且只拦截调试/作弊命令、hn_cmd 自动轮询输出/状态快照的回归。终端回归覆盖超过30行、固定29行滚动窗口、同一行追加、多批/延迟输出、清屏后输出、最后一次屏幕读取竞态与取消；`scripts/check-terminal-history.ps1` 使用临时游戏程序集夹具（仅禁用副本的 BepInEx module initializer，不启动游戏）验证真实 bridge 的100行读取、尾部窗口和原地更新。真实 game smoke 也断言超过30行后连续 `ls` 的主结果包含目录输出，不只检查开局 `help`。
 - 真实原生 `InteractiveMode` + 开发测试用 `@xterm/headless`：检查实际 ANSI viewport，验证面板、遮罩 `/login`、项目凭据写入/移除、原生模型选择弹窗和 high thinking、后台假 `/start` / `/stop`、55–200 列 / 最高 70 行窗口 resize 和 TPS 保留；包含 168×54、200×70 大屏首行定位、环境摘要去重、多行编辑与补全检查，以及原生 `/config` 菜单、L0/L1、text/text+image 选择与 55×20 设置菜单；生成 `runtime/ui-preview/` 下的 HTML/text 预览。不启动游戏，不调用真实 API。
 - 可选原生游戏 smoke（不调用 API）：BepInEx 加载第 3 个插件声明 per-monitor-v2 DPI；1920×1080 windowed 的物理客户区和游戏截图均为 1920×1080，并验证教程、登录、隔离存档、owned-PID 清理与个人存档不变。
 - 真实 pi RPC 的加载、无工具 preflight、准确工具集握手、假模型发起 `hn_screen`、假桥接响应、token 统计；从回复 usage 验证 TPS 只用输出 token。断言 `high` 实际序列化为请求中的 `reasoning_effort: high`，以及阻塞中的 preflight 可以取消并等待 owned-process 清理。另用本机假服务连续返回503，确认原生重试耗尽后暂停请求、恢复同一 sessionId、保留工具结果且没有重放旧工具；原生 TUI smoke 覆盖 PAUSED、`/retry` 与同一尝试恢复。
 - 原版新账号、教程 Continue 的可见状态约束、普通 connect 命令推进教程、login 提示态的两段输入、终端观测、独立 XML 保存、游戏-only 截图、按 owned PID 清理。
+- `--skip-intro --campaign` 从新账号开始，只用玩家工具正常完成 Bit 开场任务、Entropy 入会，验证公共教育文章可读且不能 accept、私有任务板需登录、合同 list/read/accept、非法 ID/已有任务拒绝、接取后列表移除与新邮件/链接送达，随后实际完成 Point Clicker 并获游戏任务验收。`MissionListingServer` 的接取逻辑内联在 draw 的 Accept 按钮，不能反射调用不存在的 acceptMission；独立 `bridge/MissionBoard.cs` 镜像其有约束的原生动作序列，不允许任意任务路径/Flag/goal 写入。离线 IL 回归核对真实游戏与适配器的调用顺序及状态写入。该测试不代表完整战役或其他任务板类型通过。
 - 游戏 smoke 前后检查个人 Hacknet Accounts 与 Pathfinder 目录指纹，未发生变化。
 
-**尚未完成**：真实模型的长时间 campaign run、完整教程/邮件/任务板回归、可靠 game-over/终局验证、DLC 全流程及评分、模型矩阵/重复/退出后从磁盘断点续跑、冻结游戏时间。`PLAN.md` 保留设计与这些后续里程碑。
+**尚未完成**：真实模型的完整 campaign 通关（已有长时间尝试，但未通关）、完整教程/邮件/全部任务板回归、可靠 game-over/终局验证、DLC 全流程及评分、模型矩阵/重复/退出后从磁盘断点续跑、冻结游戏时间。`PLAN.md` 保留设计与这些后续里程碑。
 
 ## 故障处理
 

@@ -21,6 +21,7 @@ HackingBench 的默认边界是**模型工具限制、项目内游戏副本、�
 - 教程按钮限制到游戏当前真实可见的 Continue/Hint 条件，不提供任意 advanceState、LoadMission 或 Flag 写入。启动选项 `skipIntro`（默认 false）可跳过开场剧情表现/首次初始化的动画延时，并在教程就绪后仅发送一次正常 `kill PID`；第一封邮件和 UI 恢复由游戏原教程退出逻辑处理。此选项只由控制面开局配置，不增加模型工具或影响后续重启/程序计时；结果报告按开场模式分组。
 - `hn_shell` 只调用游戏自己的 `ShellOverloaderExe.RunShellOverloaderExe` 来点击等价的 overload/cancel/exit，目标固定为当前连接节点，动作作用于全部活动 shell；使用包含命令名的原生 argv，观测真实 shell state/targetIP 和 proxyOverloadTicks；无活动 shell 时明确报错。不写 Flag、不跳过任务、不暴露隐藏节点或代理答案。
 - 玩家观测不投影隐藏密码、Flag、未发现节点或 mission goals。特权 judge 与玩家工具分开。
+- `listing:` 任务板适配只处理当前连接的真实板：配置文件存在、公共可读或已正常登录、条目仍存在；read 仅返回界面 posting 文本，教育/新闻文章不能 accept。接合同要求当前阵营匹配且无活动任务；镜像游戏原生 Accept 内联动作（仅从板中选任务、原生初始化/发信/移除条目），不接收任务路径、不改目标/Flag、不直接完成任务。离线 IL 核对与新游戏实际完成 Point Clicker 回归不代表其余任务板/DLC 全流程已经验证。
 - 截图只读取游戏 framebuffer，不访问桌面捕获 API。DPI 感知由项目 bridge 在创建游戏窗口前于进程内声明；不写 HKCU 兼容性项、不改 Steam 原件或 exe 清单。
 - 工作台由 Windows 原生 Bun 执行，`bunfig.toml` 禁用自动 .env 加载；安装使用冻结的 `bun.lock` 并跳过 lifecycle scripts，不做运行时自动装包。
 - 控制面复用 pi 原生 `/login` / `/logout`，凭据只暂存到项目 `runtime/controller/auth.json`（Git 忽略）。这是明文文件；Windows 权限继承项目目录，不提供加密或强制用户专属 DACL。API key 不写入 `bench.json`、prompt、CLI 参数或普通 run 文件。

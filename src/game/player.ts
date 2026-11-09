@@ -143,13 +143,13 @@ export class Player {
     return this.bridge.call("bench.reply", { id, answer }, signal);
   }
   async hub(
-    action: "list" | "accept",
+    action: "list" | "read" | "accept",
     id?: string,
     signal?: AbortSignal,
   ): Promise<unknown> {
     if (
-      !["list", "accept"].includes(action) ||
-      (action === "accept" &&
+      !["list", "read", "accept"].includes(action) ||
+      (action !== "list" &&
         (!id || !/^(contract|listing|dhs):[a-zA-Z0-9_.-]{1,100}$/.test(id)))
     )
       throw new Error("Use a listing ID returned by hn_hub.");

@@ -98,10 +98,32 @@ test("player rejects host/cheat calls before they reach the bridge", async () =>
   await assert.rejects(() => player.wait(31));
   await assert.rejects(() => player.mail("read", -1));
   await assert.rejects(() => player.hub("accept", "../../unsafe"));
+  await assert.rejects(() => player.hub("read", "../../unsafe"));
+  await assert.rejects(() => player.hub("read"));
+  await assert.rejects(() => player.hub("finish" as "accept", "listing:0"));
   await assert.rejects(() => player.input("one\ntwo"));
   await assert.rejects(() => player.shell("format" as unknown as "overload"));
   assert.deepEqual(calls, []);
 });
+test("hub list/read/accept preserve selected board IDs and use only the benchmark adapter", async () => {
+  const calls: unknown[] = [];
+  const bridge = {
+    call: async (method: string, params: unknown) => {
+      calls.push({ method, params });
+      return { ok: true };
+    },
+  } as unknown as Bridge;
+  const player = new Player(bridge);
+  await player.hub("list");
+  await player.hub("read", "listing:0");
+  await player.hub("accept", "listing:0");
+  assert.deepEqual(calls, [
+    { method: "bench.hub", params: { action: "list", id: undefined } },
+    { method: "bench.hub", params: { action: "read", id: "listing:0" } },
+    { method: "bench.hub", params: { action: "accept", id: "listing:0" } },
+  ]);
+});
+
 test("player command polls terminal output instead of requiring a manual wait", async () => {
   let historyCalls = 0;
   const bridge = {

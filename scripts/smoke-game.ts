@@ -18,6 +18,7 @@ import { exists } from "../src/environment.js";
 import { childEnvironment, validateCommand } from "../src/core/safety.js";
 import { command } from "../src/core/process.js";
 import { setTimeout as delay } from "node:timers/promises";
+import { campaignFixture } from "./campaign-fixture.js";
 
 // Explicit, opt-in GUI smoke test. Uses no LLM key and never counts as a benchmark run.
 async function fingerprint(folder: string): Promise<string> {
@@ -39,6 +40,11 @@ const config = await loadConfig();
 const display = gameWindow(config);
 // Exercise both startup modes without changing the user's persisted config.
 const skipIntro = process.argv.includes("--skip-intro");
+const campaign = process.argv.includes("--campaign");
+assert.ok(
+  !campaign || skipIntro,
+  "--campaign requires --skip-intro (fresh API-free campaign fixture).",
+);
 await prepareGame(config, console.log);
 const folder = path.join(RUNTIME, "smoke", randomUUID());
 await mkdir(folder, { recursive: true });
@@ -179,6 +185,7 @@ try {
       "Tutorial controls respect visible button availability and cannot skip command-driven steps.",
     );
   }
+  if (campaign) await campaignFixture(player);
   await player.cmd("login");
   assert.equal(((await player.screen()) as any).awaitingInput, true);
   await assert.rejects(() => player.cmd("ls"));

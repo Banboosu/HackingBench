@@ -198,15 +198,15 @@ export default function hacknetPlayer(pi: ExtensionAPI) {
     label: "Mission hub",
     executionMode: "sequential",
     description:
-      "List or accept visible contracts on the mission hub you are currently connected to. Use only IDs returned by list.",
+      "List/read/accept postings on the board you are currently connected to. Use only IDs returned by list; refresh after accepting. Private boards require normal login. listing: boards return kind=contract or article and canAccept; read shows only the visible posting text (including public education/news articles). Articles cannot be accepted. Accept a contract, then read the new email for task instructions. Read is currently supported only for listing: IDs.",
     parameters: Type.Object({
-      action: Type.String({ enum: ["list", "accept"] }),
+      action: Type.String({ enum: ["list", "read", "accept"] }),
       id: Type.Optional(Type.String()),
     }),
     async execute(_id, args, signal) {
       return result(
         await use((p) =>
-          p.hub(args.action as "list" | "accept", args.id, signal),
+          p.hub(args.action as "list" | "read" | "accept", args.id, signal),
         ),
       );
     },

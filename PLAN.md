@@ -315,3 +315,11 @@ ok
 - 只有模型/provider错误可保活；游戏/桥接/pi子进程/扩展故障和RPC超时仍fatal，尤其prompt超时不能确定是否已接受，不自动重发。开局前preflight不适用。状态机停止后拒绝继续；暂停与恢复写入脱敏events，providerPauses/providerPauseMs记入最终结果。暂停时游戏/追踪/墙钟继续，judge和本地session stats仍运行；不改变预算或评分规则。
 - 原生面板显示PAUSED、/retry与游戏时钟提醒，后台task仍占用，拒绝重复/start或热改配置；/stop/退出照常清理。Headless stdin支持/retry和/stop。尚不支持进程退出后的磁盘恢复，旧的已结束INFRA_ERROR不能因此继续；同一会话凭据/模型不热替换。
 - 验证TypeScript + **140个测试**；覆盖暂停不发请求、时长累计、并发恢复、100次人工恢复无配额、恢复ack前再失败、停止后拒绝恢复、prompt RPC超时不重放、原生UI同一attempt继续。真实pi RPC + 本地假模型连续503耗尽原生重试后暂停，恢复前后sessionId相同且旧工具结果保留、工具调用数不增加；真实InteractiveMode + 假runner验证PAUSED、/retry以及无原生命令冲突。TUI/RPC smoke均通过，无真实模型调用或游戏启动。
+
+## 18. 80 分钟 run 卡在 Entropy 的复核与接任务修复
+
+- 只读复核 run `2026-11-09T03-30-27-031Z-b50050cb`：约79.75分钟、701次工具调用、30次错误，终态 cancelled，不是运行配额或最终 API 失败。前11分钟已通过6次邮件验收并进入 Entropy 任务板；03:41:42Z 首次接 listing:0 报 acceptMission not found on MissionListingServer，随后约69分钟/543次调用没有接上首份合同，同类缺失方法错误共8次。中间两次503由原生重试恢复，非本次主卡点。模型长时间重复绕路是次要行为问题，不能拿来掩盖适配故障。
+- Cecil 核对实际游戏：MissionListingServer 根本没有 acceptMission；接取动作内联在 draw 的 Accept 按钮。旧 HubAccept 为 listing/dhs 假定同一方法名和 int 参数，原先只验证能列出任务，遗漏了真实接取。新增独立 `bridge/MissionBoard.cs` 处理 listing 板：按原生按钮顺序选当前可见条目、readMission 初始化、sendEmail、ActivateSuppressedStartFunctionIfPresent、removeMission、回 BOARD；不接受任意任务路径，不写 goals/Flag 或跳过目标。其他 hub 类型仍走既有路径，本次未验证 CSEC/DLC 接取，不宣称全流程修复。
+- 同类 MissionListingServer 也承载公共教育/新闻：旧工具只列标题/接取，无法按界面读正文，导致把文章误当合同并反复尝试破解公共档案。补充 `hn_hub read`（仅 listing:）及 kind/canAccept，read 只读 postingBody；文章不能 accept。私有板需正常登录，配置和条目必须仍在；合同要求当前阵营匹配且无活动任务，接取后刷新索引。
+- 新 `scripts/check-mission-board.ps1` 离线验证真实程序集确无 acceptMission，适配器与原生 Accept 的副作用调用序列完全相同，仅写 currentMission 与 board UI state。`smoke:game --skip-intro --campaign` 从独立新账号开始，仅通过玩家工具正常完成 Bit 开场/Entropy 入会，验证教育文章读取、未登录拒绝、合同正文、非法ID/已有任务拒绝、列表移除和新邮件/链接，然后实际删除客户在 PointClicker 的存档并获原生任务验收。不使用真实模型/API、调试命令、任意任务/Flag接口，不读取旧run存档来启动游戏。
+- 完整 campaign smoke 通过，后续原有窗口、登录、终端历史、shell overload/cancel/exit、截图、独立 XML 保存和个人 Hacknet/Pathfinder 指纹不变回归仍通过。TypeScript + **141个测试**、pi RPC smoke、原生 TUI smoke通过。部署仅写 runtime/game，未改用户配置/Steam/原run记录，未新增 budget 或重复动作强停；仍不等同于模型完整战役通关或全部任务板验证。

@@ -154,11 +154,7 @@ public static partial class Executor
             }
             case "bench.hub":
             {
-                if (os.connectedComp == null) throw new ArgumentException("Connect to a mission hub first.");
-                if ((Str(req.Params, "action") ?? "list") == "list") return HubList(os, os.connectedComp.ip);
-                var id = Str(req.Params, "id");
-                if (string.IsNullOrEmpty(id) || id.Length > 128) throw new ArgumentException("Invalid mission listing ID.");
-                return HubAccept(os, os.connectedComp.ip, id);
+                return BenchHub(os, Str(req.Params, "action") ?? "list", Str(req.Params, "id"));
             }
             case "bench.judge":
             {
